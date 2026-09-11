@@ -217,6 +217,46 @@ def filter_tagged_lines(output: str) -> str:
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def build_recorded_output(output: str, *, tagged_only: bool, failed: bool) -> str:
+    """Apply `--tagged-only` filtering, appending the error tail on failure.
+
+    Parameters
+    ----------
+    output : `str`
+        Raw captured output.
+    tagged_only : `bool`
+        Whether to filter to lines matching `TAG_PATTERN`.
+    failed : `bool`
+        If `True` and `tagged_only` is set, append everything printed after
+        the last tagged line (the likely error text) below a divider, so a
+        failing run's actual error isn't silently filtered out.
+
+    Returns
+    -------
+    text : `str`
+        The output text to record.
+    """
+    if not tagged_only:
+        return output
+    filtered = filter_tagged_lines(output)
+    if not failed:
+        return filtered
+
+    pattern = re.compile(TAG_PATTERN, re.IGNORECASE)
+    lines = output.splitlines()
+    last_tagged_idx = -1
+    for i, line in enumerate(lines):
+        if pattern.match(line):
+            last_tagged_idx = i
+    tail = "\n".join(lines[last_tagged_idx + 1:])
+    if not tail.strip():
+        return filtered
+
+    divider = "--- error output (untagged) ---"
+    return f"{filtered}\n{divider}\n{tail}" if filtered else f"{divider}\n{tail}"
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 def render_log(entries: dict[str, Entry]) -> str:
     """Render all entries back to a single Markdown document.
 
@@ -252,7 +292,7 @@ def render_log(entries: dict[str, Entry]) -> str:
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 def record(
         *, log_file: Path, script_id: str, order: int, output: str,
-        root: Path, label: str = "",
+        root: Path, label: str = "", failed: bool = False,
         ) -> None:
     """Upsert one script's entry in the run-log, replacing its prior state.
 
@@ -270,6 +310,9 @@ def record(
         Git working-tree root used to resolve the commit hash/dirty flag.
     label : `str`, optional
         Free-text label (e.g. the command line) shown in the section title.
+    failed : `bool`, optional, default: `False`
+        If `True`, skip computing/rendering a diff against the previous
+        run -- a diff is noise on a failed run.
 
     Notes
     -----
@@ -281,11 +324,13 @@ def record(
     commit, dirty = get_git_info(root)
     previous = entries.get(script_id)
 
-    diff = diff_text(previous.output, output) if previous is not None else None
-    if diff is not None:
-        _log.info("changes vs previous run of %r:\n%s", script_id, diff)
-    elif previous is not None:
-        _log.info("no change vs previous run of %r", script_id)
+    diff = None
+    if not failed:
+        diff = diff_text(previous.output, output) if previous is not None else None
+        if diff is not None:
+            _log.info("changes vs previous run of %r:\n%s", script_id, diff)
+        elif previous is not None:
+            _log.info("no change vs previous run of %r", script_id)
 
     diff_block = None
     if diff is not None and previous is not None:
@@ -328,7 +373,9 @@ def run_and_record(
     command : `list[str]`
         The command and its arguments to execute.
     tagged_only : `bool`, optional, default: `False`
-        If `True`, only record lines matching `TAG_PATTERN`.
+        If `True`, only record lines matching `TAG_PATTERN`. On a failed
+        run, the untagged error tail is appended regardless -- see
+        `build_recorded_output`.
 
     Returns
     -------
@@ -347,13 +394,14 @@ def run_and_record(
         captured.append(line.rstrip("\n"))
     proc.wait()
 
-    output = "\n".join(captured)
-    if tagged_only:
-        output = filter_tagged_lines(output)
+    failed = proc.returncode != 0
+    output = build_recorded_output(
+            "\n".join(captured), tagged_only=tagged_only, failed=failed,
+            )
 
     record(
             log_file=log_file, script_id=script_id, order=order,
-            output=output, root=root, label=" ".join(command),
+            output=output, root=root, label=" ".join(command), failed=failed,
             )
     return proc.returncode
 
