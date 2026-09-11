@@ -34,6 +34,7 @@ DEFAULT_LOG_NAME: str = "RUN_LOG.md"
 MAX_DIFF_LINES: int = 40
 SECTION_HEADER_PREFIX: str = "## "
 TAG_PATTERN: str = r"^\[[A-Za-z]+\]"  # see TODO.md
+ERROR_TAIL_DIVIDER: str = "--- error output (untagged) ---"
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -64,6 +65,9 @@ class Entry:
         block above `output` when not `None`. Computed fresh at record
         time -- never re-derived from a parsed file, so it is never
         nested inside the ``Output:`` code fence.
+    failed : `bool`, optional, default: `False`
+        Whether this run's underlying command failed. Only ever set
+        `True` via `run`'s exit-code check; `record` never sets it.
     """
 
     script_id: str
@@ -74,6 +78,7 @@ class Entry:
     label: str
     output: str
     diff: str | None = None
+    failed: bool = False
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -145,6 +150,7 @@ def parse_log(path: Path) -> dict[str, Entry]:
         timestamp = ""
         commit = "unknown"
         dirty = False
+        failed = False
         while i < len(lines) and lines[i].startswith("- "):
             meta = lines[i][2:]
             if meta.startswith("last run: "):
@@ -152,6 +158,8 @@ def parse_log(path: Path) -> dict[str, Entry]:
             elif meta.startswith("commit: "):
                 commit = meta[len("commit: `"):].split("`")[0]
                 dirty = "(dirty)" in meta
+            elif meta.startswith("status: "):
+                failed = meta[len("status: "):].strip() == "failed"
             i += 1
 
         # skip any diff block, then read the current "Output:" fenced block
@@ -172,7 +180,7 @@ def parse_log(path: Path) -> dict[str, Entry]:
         entries[script_id] = Entry(
                 script_id=script_id, order=order, timestamp=timestamp,
                 commit=commit, dirty=dirty, label=label,
-                output="\n".join(output_lines),
+                output="\n".join(output_lines), failed=failed,
                 )
 
     return entries
@@ -252,8 +260,10 @@ def build_recorded_output(output: str, *, tagged_only: bool, failed: bool) -> st
     if not tail.strip():
         return filtered
 
-    divider = "--- error output (untagged) ---"
-    return f"{filtered}\n{divider}\n{tail}" if filtered else f"{divider}\n{tail}"
+    return (
+            f"{filtered}\n{ERROR_TAIL_DIVIDER}\n{tail}" if filtered
+            else f"{ERROR_TAIL_DIVIDER}\n{tail}"
+            )
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -280,8 +290,10 @@ def render_log(entries: dict[str, Entry]) -> str:
                 f"{SECTION_HEADER_PREFIX}{title}",
                 f"- last run: {entry.timestamp}",
                 f"- commit: `{entry.commit}`{dirty_note}",
-                "",
                 ]
+        if entry.failed:
+            block.append("- status: failed")
+        block.append("")
         if entry.diff is not None:
             block += [entry.diff, ""]
         block += ["Output:", "```text", entry.output, "```"]
@@ -293,6 +305,7 @@ def render_log(entries: dict[str, Entry]) -> str:
 def record(
         *, log_file: Path, script_id: str, order: int, output: str,
         root: Path, label: str = "", failed: bool = False,
+        tagged_only: bool = False,
         ) -> None:
     """Upsert one script's entry in the run-log, replacing its prior state.
 
@@ -313,6 +326,12 @@ def record(
     failed : `bool`, optional, default: `False`
         If `True`, skip computing/rendering a diff against the previous
         run -- a diff is noise on a failed run.
+    tagged_only : `bool`, optional, default: `False`
+        If `True` and the previous run for this id had failed while this
+        one succeeds, diff against the previous run's output with its
+        untagged error tail (see `ERROR_TAIL_DIVIDER`) stripped out, and
+        note that the error was resolved instead of showing its removal
+        as part of the diff.
 
     Notes
     -----
@@ -325,26 +344,43 @@ def record(
     previous = entries.get(script_id)
 
     diff = None
-    if not failed:
-        diff = diff_text(previous.output, output) if previous is not None else None
+    resolved_note = False
+    if not failed and previous is not None:
+        old_for_diff = previous.output
+        if tagged_only and previous.failed:
+            resolved_note = True
+            if ERROR_TAIL_DIVIDER in previous.output:
+                old_for_diff, _, _tail = previous.output.partition(
+                        ERROR_TAIL_DIVIDER,
+                        )
+                old_for_diff = old_for_diff.rstrip("\n")
+
+        diff = diff_text(old_for_diff, output)
         if diff is not None:
             _log.info("changes vs previous run of %r:\n%s", script_id, diff)
-        elif previous is not None:
+        elif resolved_note:
+            _log.info("error resolved vs previous run of %r", script_id)
+        else:
             _log.info("no change vs previous run of %r", script_id)
 
     diff_block = None
-    if diff is not None and previous is not None:
+    if (diff is not None or resolved_note) and previous is not None:
         prev_dirty_note = " (dirty)" if previous.dirty else ""
-        diff_block = (
+        parts = [
                 f"Δ vs previous run (was `{previous.commit}`"
-                f"{prev_dirty_note}):\n```diff\n{diff}\n```"
-                )
+                f"{prev_dirty_note}):",
+                ]
+        if resolved_note:
+            parts.append("- error resolved")
+        if diff is not None:
+            parts.append(f"```diff\n{diff}\n```")
+        diff_block = "\n".join(parts)
 
     entries[script_id] = Entry(
             script_id=script_id, order=order,
             timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             commit=commit, dirty=dirty, label=label, output=output,
-            diff=diff_block,
+            diff=diff_block, failed=failed,
             )
 
     log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -402,6 +438,7 @@ def run_and_record(
     record(
             log_file=log_file, script_id=script_id, order=order,
             output=output, root=root, label=" ".join(command), failed=failed,
+            tagged_only=tagged_only,
             )
     return proc.returncode
 
@@ -526,6 +563,7 @@ def main() -> None:
         record(
                 log_file=log_file, script_id=args.script_id,
                 order=args.order, output=output, root=root,
+                tagged_only=args.tagged_only,
                 )
 
 
