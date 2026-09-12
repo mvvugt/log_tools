@@ -2,6 +2,8 @@
 .*
 !.gitignore
 !.gitkeep
+!.gitlab-ci.yml
+!.bumpversion.cfg
 
 # vim files
 *~
@@ -32,6 +34,9 @@ old*
 venv/
 *.egg-info/*
 __pycache__
+dist/
+build/
+docs/build/
 
 # R filtes
 *.Rdata

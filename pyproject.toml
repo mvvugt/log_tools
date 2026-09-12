@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "log_tools"
+dynamic = ["version"]
+description = "Record per-script run output into one compact, project-wide Markdown log."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = "MIT"
+license-files = ["LICENSE.txt"]
+authors = [
+    { name = "Marion van Vugt", email = "marionv124@gmail.com" },
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+    "Development Status :: 3 - Alpha",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff", "bump2version", "build", "twine", "sphinx"]
+
+[project.urls]
+#TODO update to log_tools
+Repository = "https://gitlab.com/mvvugt/runlog"
+
+[project.scripts]
+runlog = "log_tools.cli.runlog:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["log_tools*"]
+exclude = ["docs*", "resources*", "build*", "dist*"]
+
+[tool.setuptools.dynamic]
+version = { file = "VERSION" }
+
+[tool.ruff]
+line-length = 80
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
