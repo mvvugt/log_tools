@@ -27,8 +27,7 @@ dependencies = []
 dev = ["pytest", "ruff", "bump2version", "build", "twine", "sphinx"]
 
 [project.urls]
-#TODO update to log_tools
-Repository = "https://gitlab.com/mvvugt/runlog"
+Repository = "https://gitlab.com/mvvugt/log_tools"
 
 [project.scripts]
 runlog = "log_tools.cli.runlog:main"
