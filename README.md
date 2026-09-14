@@ -1,54 +1,82 @@
 # log_tools
 
-A small, stdlib-only package for logging/pipeline-tracking tools. Currently
-contains **`runlog`**, which records every pipeline script's run into **one
-compact, project-wide Markdown log** (`RUN_LOG.md` by default) — instead of
-scrolling back through terminal output, or one log file per script piling
-up over time.
+__version__: `0.1.0`
 
-## Installation
+A small, stdlib-only package for logging/pipeline-tracking tools.
+Currently contains **`runlog`**, which records every pipeline script's
+run into **one compact, project-wide Markdown log** (`RUN_LOG.md` by
+default) — instead of scrolling back through terminal output, or one
+log file per script piling up over time.
 
-    pip install -e .
+There is [online](https://mvvugt.gitlab.io/log_tools/index.html)
+documentation for log_tools.
 
-This installs the `runlog` command via the package's console-script entry
-point (`log_tools.cli.runlog:main`).
+## Installation instructions
 
-## Why
+### Using pip
 
-Each time you run a step through `runlog`, it:
-
-- captures that step's combined stdout+stderr
-- **replaces** (not appends) the section for that step's `--id`, so the
-  file stays small no matter how many times you re-run the pipeline
-- shows a diff against that step's *previous* run, so you can see exactly
-  what changed
-- tags the entry with the short git commit hash (and a dirty-working-tree
-  flag) active at run time, so if a later change turns out to be wrong you
-  know exactly which commit to check out to get back the old behavior
-
-Sections are ordered by an explicit `--order` number you choose per call,
-so the log's layout can mirror your pipeline's execution order (e.g.
-`src/mr_arrhythmia.sh`) regardless of which steps you happen to re-run.
-
-## Usage
-
-Two subcommands:
+Install from the root of the cloned repository:
 
 ```
-runlog run    --id ID --order N [--root PATH] [--log-file PATH] -- CMD...
-runlog record --id ID --order N [--root PATH] [--log-file PATH] (--text TEXT | --stdin)
+git clone git@gitlab.com:mvvugt/log_tools.git
+cd log_tools
+python -m pip install .
 ```
 
-- `--id` — identifier for the step; keys its section in the log.
-- `--order` — sort key controlling where that section lands in the file.
-- `--root` — git working-tree root used to resolve the commit hash/dirty
-  flag (defaults to `git rev-parse --show-toplevel` from cwd).
-- `--log-file` — defaults to `<root>/RUN_LOG.md`.
+Or for an editable (developer) install, which lets you `git pull` to
+update without re-installing:
 
-**`run`** wraps a command: runs it, streams its output through live (so
-you still see it interactively), captures it, and records it. Exit code is
-passed through unchanged, so it plays well with `set -eo pipefail`. Example
-(as wired into `src/mr_arrhythmia.sh`):
+```
+python -m pip install -e .
+```
+
+A conda build recipe (for publishing a conda package, not a dev
+environment) is also available under `resources/conda/` — see
+`resources/conda/README.md`.
+
+#### Development
+
+For development work, install with the `dev` extras (`pytest`, `ruff`,
+`bump2version`, `build`, `twine`, `sphinx`):
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+Lint/format before committing:
+
+```bash
+ruff check --fix . && ruff format .
+```
+
+### Verify installation
+
+```
+runlog --help
+```
+
+## Run the tests
+
+After installation you will be able to run the tests. If you have
+cloned the repository you can run the command below from the root of
+the repository:
+
+```
+pytest tests
+```
+
+### Get help
+
+To get help, type `runlog -h` (or `runlog run -h` / `runlog record -h`
+for a subcommand's own options).
+
+### Quick start example
+
+Two subcommands: `run` wraps a command, streaming its output through
+live while capturing and recording it; `record` is the primitive
+underneath `run`, for when the output text is already in hand.
+
+Wrap a command (as wired into `src/mr_arrhythmia.sh`):
 
 ```bash
 runlog run --id id_mapping --order 10 --root "$ROOT" -- \
@@ -56,11 +84,23 @@ runlog run --id id_mapping --order 10 --root "$ROOT" -- \
     "$ROOT"/src/id_mapping.py build
 ```
 
-**`record`** is the primitive underneath `run` — use it directly when you
-already have the output text in hand and there's nothing to wrap (e.g. a
-step whose real output only exists later, asynchronously, such as a SLURM
-job you want to record from inside its own batch script once it finishes):
+Record already-known output directly (e.g. a step whose real output
+only exists later, asynchronously, such as a SLURM job recording from
+inside its own batch script once it finishes):
 
 ```bash
 runlog record --id my_step --order 50 --root "$ROOT" --text "$(cat some_summary.txt)"
 ```
+
+### Change log
+
+See `CHANGELOG.md` for the full history. Latest (`[Unreleased]`):
+
+#### version `Unreleased`
+
+* BUILD - Convert single-file `runlog.py` script into an installable `log_tools` package with a `runlog` console-script entry point.
+* REFACTOR - Split `runlog.py` into `log_tools/functions.py` (shared functions), `log_tools/runlog.py` (specific functions), and `log_tools/cli/runlog.py` (thin argparse CLI wrapper).
+* BUILD - Add GitLab CI/CD scaffolding: `.gitlab-ci.yml` (GitLab Pages deploy stage) plus `resources/ci_cd/` scripts for local Docker-parity lint/test debugging.
+* DOCS - Add Sphinx documentation scaffolding under `docs/`.
+* DOCS - Rewrite README.md's packaging section.
+* BUILD - Add `VERSION`, `.bumpversion.cfg`, `LICENSE.txt` (MIT), and ruff configuration in `pyproject.toml`.

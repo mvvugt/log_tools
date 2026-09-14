@@ -12,6 +12,7 @@ copyright = '2026, Marion van Vugt'
 release = log_tools.__version__
 
 extensions = [
+    "myst_parser",
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",
 ]
