@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..conftest import commit_hash, git_repo, run_cli  # noqa: F401 (fixture)
+from ..conftest import REPO_ROOT, commit_hash, git_repo, run_cli  # noqa: F401 (fixture)
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -75,23 +75,57 @@ def test_run_streams_output_and_propagates_exit_code(git_repo: Path) -> None:
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-def test_tagged_only_filters_recorded_text(git_repo: Path) -> None:
-    """`--tagged-only` on `record` filters non-tagged lines before writing."""
+def test_include_pattern_filters_recorded_text(git_repo: Path) -> None:
+    """`--include-pattern` on `record` filters non-matching lines before
+    writing."""
     log_file = git_repo / "RUN_LOG.md"
 
     result = run_cli(
             [
                     "record", "--id", "s1", "--order", "0",
                     "--root", str(git_repo), "--log-file", str(log_file),
-                    "--tagged-only", "--text", "[info] kept\nnoise dropped",
+                    "--include-pattern", r"^\[[A-Za-z]+\]",
+                    "--text", "[info] kept\nnoise dropped",
                     ],
             cwd=git_repo,
             )
 
     assert result.returncode == 0, result.stderr
-    text = log_file.read_text()
-    assert "[info] kept" in text
-    assert "noise dropped" not in text
+    output_block = log_file.read_text().split("Output:")[-1]
+    assert "[info] kept" in output_block
+    assert "noise dropped" not in output_block
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_run_records_only_emitter_output_via_bash(git_repo: Path) -> None:
+    """A bash script sourcing emitter.sh has only its log_* lines recorded,
+    a plain `echo` is not, and a `no-record` call is excluded while a
+    plain `log_error` in the same script is always included."""
+    log_file = git_repo / "RUN_LOG.md"
+    emitter_sh = REPO_ROOT / "log_tools" / "emitter.sh"
+    script = (
+            f'source "{emitter_sh}"; '
+            'log_info "kept"; '
+            'log_info "excluded" no-record; '
+            'echo "plain echo not recorded"; '
+            'log_error "always kept"'
+            )
+
+    result = run_cli(
+            [
+                    "run", "--id", "s1", "--order", "0",
+                    "--root", str(git_repo), "--log-file", str(log_file),
+                    "--", "bash", "-c", script,
+                    ],
+            cwd=git_repo,
+            )
+
+    assert result.returncode == 0, result.stderr
+    output_block = log_file.read_text().split("Output:")[-1]
+    assert "kept" in output_block
+    assert "always kept" in output_block
+    assert "excluded" not in output_block
+    assert "plain echo not recorded" not in output_block
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

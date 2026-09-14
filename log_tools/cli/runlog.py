@@ -17,7 +17,7 @@ from pathlib import Path
 
 from log_tools.runlog import (
     Constants,
-    filter_tagged_lines,
+    filter_matching_lines,
     record,
     run_and_record,
 )
@@ -57,8 +57,11 @@ def _init_cmd_args() -> argparse.ArgumentParser:
             help=f"Log file path (default: <root>/{Constants.DEFAULT_LOG_NAME}).",
             )
     common.add_argument(
-            "-t", "--tagged-only", action="store_true",
-            help="Only record lines matching an [info]/[warn]/[error]/[debug] tag.",
+            "-i", "--include-pattern", default=None,
+            help=(
+                    "Additionally include raw output lines matching this "
+                    "regex in the recorded output."
+                    ),
             )
 
     run_parser = subparsers.add_parser(
@@ -68,6 +71,13 @@ def _init_cmd_args() -> argparse.ArgumentParser:
     run_parser.add_argument(
             "cmd", metavar="command", nargs=argparse.REMAINDER,
             help="Command and arguments to run (after `--`).",
+            )
+    run_parser.add_argument(
+            "--raw-on-failure", action="store_true",
+            help=(
+                    "On a failed run, also append the full raw captured "
+                    "output as a safety net."
+                    ),
             )
 
     record_parser = subparsers.add_parser(
@@ -141,17 +151,19 @@ def main() -> None:
         returncode = run_and_record(
                 log_file=log_file, script_id=args.script_id,
                 order=args.order, root=root, command=command,
-                tagged_only=args.tagged_only,
+                include_pattern=args.include_pattern,
+                raw_on_failure=args.raw_on_failure,
                 )
         sys.exit(returncode)
     else:
         output = sys.stdin.read() if args.stdin else args.text
-        if args.tagged_only:
-            output = filter_tagged_lines(output)
+        if args.include_pattern:
+            output = "\n".join(
+                    filter_matching_lines(output, args.include_pattern),
+                    )
         record(
                 log_file=log_file, script_id=args.script_id,
                 order=args.order, output=output, root=root,
-                tagged_only=args.tagged_only,
                 )
 
 

@@ -8,7 +8,7 @@ from log_tools.runlog import (
     Entry,
     build_recorded_output,
     diff_text,
-    filter_tagged_lines,
+    filter_matching_lines,
     parse_log,
     record,
     render_log,
@@ -49,10 +49,10 @@ def test_diff_text_truncates_long_diffs() -> None:
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-# filter_tagged_lines
+# filter_matching_lines
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-def test_filter_tagged_lines_keeps_only_tagged() -> None:
-    """Only lines starting with a `[tag]` prefix survive filtering."""
+def test_filter_matching_lines_keeps_only_matching() -> None:
+    """Only lines matching `pattern` survive filtering."""
     output = "\n".join([
             "[info] starting",
             "raw untagged noise",
@@ -60,68 +60,101 @@ def test_filter_tagged_lines_keeps_only_tagged() -> None:
             "traceback line",
             ])
 
-    filtered = filter_tagged_lines(output)
+    filtered = filter_matching_lines(output, Constants.TAG_PATTERN)
 
-    assert filtered.splitlines() == ["[info] starting", "[warn] careful"]
+    assert filtered == ["[info] starting", "[warn] careful"]
 
 
-def test_filter_tagged_lines_empty_input() -> None:
-    """Filtering empty output returns an empty string."""
-    assert filter_tagged_lines("") == ""
+def test_filter_matching_lines_empty_input() -> None:
+    """Filtering empty output returns an empty list."""
+    assert filter_matching_lines("", Constants.TAG_PATTERN) == []
+
+
+def test_filter_matching_lines_custom_pattern() -> None:
+    """An arbitrary user-supplied regex is honored, not just TAG_PATTERN."""
+    output = "\n".join(["ERROR: boom", "fine", "WARNING: careful"])
+
+    filtered = filter_matching_lines(output, r"^(ERROR|WARNING):")
+
+    assert filtered == ["ERROR: boom", "WARNING: careful"]
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # build_recorded_output
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-def test_build_recorded_output_passthrough_when_not_tagged_only() -> None:
-    """With tagged_only=False, the raw output is returned unchanged."""
+def test_build_recorded_output_no_record_no_pattern_uses_raw() -> None:
+    """With no record-file content and no include_pattern, raw is kept."""
     raw = "[info] a\nraw noise"
 
-    assert build_recorded_output(raw, tagged_only=False, failed=False) == raw
-    assert build_recorded_output(raw, tagged_only=False, failed=True) == raw
+    assert build_recorded_output(raw) == raw
+    assert build_recorded_output(raw, failed=True) == raw
 
 
-def test_build_recorded_output_tagged_only_success_filters() -> None:
-    """tagged_only + success just filters, with no error-tail handling."""
+def test_build_recorded_output_record_file_wins_when_nonempty() -> None:
+    """Non-empty record-file content is used as-is when it's the only input."""
     raw = "[info] a\nnoise\n[info] b"
 
-    result = build_recorded_output(raw, tagged_only=True, failed=False)
+    result = build_recorded_output(
+            raw, record_file_content="[info] a\n[info] b",
+            )
 
     assert result == "[info] a\n[info] b"
 
 
-def test_build_recorded_output_tagged_only_failure_appends_tail() -> None:
-    """A failed run appends everything after the last tagged line."""
+def test_build_recorded_output_include_pattern_merges_chronologically() -> None:
+    """include_pattern adds matching raw lines, preserving original order."""
+    raw = "[info] a\nERROR here\n[info] b"
+
+    result = build_recorded_output(
+            raw, record_file_content="[info] a\n[info] b",
+            include_pattern=r"^ERROR",
+            )
+
+    assert result == "[info] a\nERROR here\n[info] b"
+
+
+def test_build_recorded_output_include_pattern_no_record_file() -> None:
+    """include_pattern alone (no record-file content) filters raw by pattern."""
+    raw = "keep this\nnot this\nERROR: keep too"
+
+    result = build_recorded_output(raw, include_pattern=r"^(keep|ERROR)")
+
+    assert result == "keep this\nERROR: keep too"
+
+
+def test_build_recorded_output_raw_on_failure_appends_full_raw() -> None:
+    """raw_on_failure appends the full raw output under the divider."""
     raw = "[info] a\nTraceback (most recent call last):\nBoom: bad"
 
-    result = build_recorded_output(raw, tagged_only=True, failed=True)
-
-    assert result == (
-            "[info] a\n"
-            f"{Constants.ERROR_TAIL_DIVIDER}\n"
-            "Traceback (most recent call last):\nBoom: bad"
+    result = build_recorded_output(
+            raw, record_file_content="[info] a",
+            raw_on_failure=True, failed=True,
             )
 
-
-def test_build_recorded_output_tagged_only_failure_no_tail() -> None:
-    """A failed run with nothing after the last tag returns just the filter."""
-    raw = "[info] a\n[error] b"
-
-    result = build_recorded_output(raw, tagged_only=True, failed=True)
-
-    assert result == "[info] a\n[error] b"
+    assert result == f"[info] a\n{Constants.ERROR_TAIL_DIVIDER}\n{raw}"
 
 
-def test_build_recorded_output_tagged_only_failure_no_tags_at_all() -> None:
-    """A failed run with no tagged lines uses the divider alone as prefix."""
+def test_build_recorded_output_raw_on_failure_ignored_on_success() -> None:
+    """raw_on_failure has no effect unless the run actually failed."""
+    raw = "[info] a\nnoise"
+
+    result = build_recorded_output(
+            raw, record_file_content="[info] a",
+            raw_on_failure=True, failed=False,
+            )
+
+    assert result == "[info] a"
+
+
+def test_build_recorded_output_raw_on_failure_duplicates_raw_fallback() -> None:
+    """With no record-file content, base already == raw (auto fallback), so
+    raw_on_failure deliberately duplicates it under the divider -- a
+    simplicity/never-lose-data tradeoff, not deduplicated."""
     raw = "Traceback (most recent call last):\nBoom: bad"
 
-    result = build_recorded_output(raw, tagged_only=True, failed=True)
+    result = build_recorded_output(raw, raw_on_failure=True, failed=True)
 
-    assert result == (
-            f"{Constants.ERROR_TAIL_DIVIDER}\n"
-            "Traceback (most recent call last):\nBoom: bad"
-            )
+    assert result == f"{raw}\n{Constants.ERROR_TAIL_DIVIDER}\n{raw}"
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -304,11 +337,11 @@ def test_record_failed_run_skips_diff(git_repo: Path) -> None:
     assert "boom" in text
 
 
-def test_record_tagged_only_resolved_error_notes_and_strips_tail(
-        git_repo: Path,
-        ) -> None:
-    """After a tagged_only failure, a success notes resolution and diffs
-    against the previous output with its untagged error tail stripped."""
+def test_record_resolved_error_notes_and_strips_tail(git_repo: Path) -> None:
+    """After a failure whose output contains the error-tail divider, a
+    success notes resolution and diffs against the previous output with
+    its tail stripped -- keyed purely off the divider's presence, no mode
+    flag needed."""
     log_file = git_repo / "RUN_LOG.md"
     failed_output = (
             "[info] a\n"
@@ -317,12 +350,12 @@ def test_record_tagged_only_resolved_error_notes_and_strips_tail(
             )
     record(
             log_file=log_file, script_id="s1", order=0, output=failed_output,
-            root=git_repo, failed=True, tagged_only=True,
+            root=git_repo, failed=True,
             )
 
     record(
             log_file=log_file, script_id="s1", order=0, output="[info] a",
-            root=git_repo, failed=False, tagged_only=True,
+            root=git_repo, failed=False,
             )
 
     text = log_file.read_text()
@@ -369,10 +402,10 @@ def test_run_and_record_failure_marks_failed_and_propagates_exit_code(
     assert "oops" in text
 
 
-def test_run_and_record_tagged_only_keeps_tail_on_failure(
+def test_run_and_record_raw_on_failure_keeps_full_raw_tail(
         git_repo: Path,
         ) -> None:
-    """tagged_only + failing command keeps the untagged error tail."""
+    """--raw-on-failure keeps everything printed, even without the emitter."""
     log_file = git_repo / "RUN_LOG.md"
     script = (
             "print('[info] starting'); "
@@ -382,7 +415,7 @@ def test_run_and_record_tagged_only_keeps_tail_on_failure(
 
     returncode = run_and_record(
             log_file=log_file, script_id="s1", order=0, root=git_repo,
-            command=["python3", "-c", script], tagged_only=True,
+            command=["python3", "-c", script], raw_on_failure=True,
             )
 
     assert returncode == 1
@@ -390,3 +423,63 @@ def test_run_and_record_tagged_only_keeps_tail_on_failure(
     assert "[info] starting" in text
     assert Constants.ERROR_TAIL_DIVIDER in text
     assert "unrelated noise" in text
+
+
+def test_run_and_record_uses_record_file_over_raw_output(
+        git_repo: Path,
+        ) -> None:
+    """A script appending to $RUNLOG_RECORD_FILE has that content recorded,
+    not the full raw stdout."""
+    log_file = git_repo / "RUN_LOG.md"
+    script = (
+            "import os; "
+            "print('not recorded'); "
+            "f = open(os.environ['RUNLOG_RECORD_FILE'], 'a'); "
+            "f.write('[info] kept\\n')"
+            )
+
+    returncode = run_and_record(
+            log_file=log_file, script_id="s1", order=0, root=git_repo,
+            command=["python3", "-c", script],
+            )
+
+    assert returncode == 0
+    output_block = log_file.read_text().split("Output:")[-1]
+    assert "[info] kept" in output_block
+    assert "not recorded" not in output_block
+
+
+def test_run_and_record_empty_record_file_falls_back_to_raw(
+        git_repo: Path,
+        ) -> None:
+    """A script that never touches the record file gets full raw output."""
+    log_file = git_repo / "RUN_LOG.md"
+
+    run_and_record(
+            log_file=log_file, script_id="s1", order=0, root=git_repo,
+            command=["python3", "-c", "print('plain output')"],
+            )
+
+    text = log_file.read_text()
+    assert "plain output" in text
+
+
+def test_run_and_record_cleans_up_temp_record_file(git_repo: Path) -> None:
+    """The temp record file is removed after the run, success or failure."""
+    log_file = git_repo / "RUN_LOG.md"
+    script = (
+            "import os; "
+            "print(os.environ['RUNLOG_RECORD_FILE'])"
+            )
+
+    run_and_record(
+            log_file=log_file, script_id="s1", order=0, root=git_repo,
+            command=["python3", "-c", script],
+            )
+
+    text = log_file.read_text()
+    printed_path = [
+            line for line in text.splitlines() if line.startswith("/")
+            ]
+    assert printed_path, "expected the record file path to be printed"
+    assert not Path(printed_path[0]).exists()

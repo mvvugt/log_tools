@@ -31,6 +31,7 @@ Repository = "https://gitlab.com/mvvugt/log_tools"
 
 [project.scripts]
 runlog = "log_tools.cli.runlog:main"
+runlog-emitter-path = "log_tools.cli.emitter_path:main"
 
 [tool.setuptools]
 include-package-data = true
@@ -38,6 +39,9 @@ include-package-data = true
 [tool.setuptools.packages.find]
 include = ["log_tools*"]
 exclude = ["docs*", "resources*", "build*", "dist*"]
+
+[tool.setuptools.package-data]
+log_tools = ["emitter.sh"]
 
 [tool.setuptools.dynamic]
 version = { file = "VERSION" }

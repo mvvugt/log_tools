@@ -9,15 +9,22 @@ diffed against the new output and shown inline, and the git commit active at
 run time is recorded, so a later change can be traced back to the exact
 commit that produced a given run's output.
 
-See TODO.md for planned direction (incl. why ``--tagged-only`` is a stopgap).
+Recorded output is produced primarily by scripts calling into
+``log_tools.emitter`` (Python) or sourcing ``log_tools/emitter.sh``
+(Bash), which append to a temp file this module exposes to the child
+process via ``Constants.RECORD_FILE_ENV_VAR`` -- see `run_and_record`.
+An optional user-supplied ``include_pattern`` regex can additionally
+pull matching raw lines into the recorded output.
 """
 from __future__ import annotations
 
 import difflib
 import logging
+import os
 import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -34,8 +41,9 @@ class Constants:
     DEFAULT_LOG_NAME: str = "RUN_LOG.md"
     MAX_DIFF_LINES: int = 40
     SECTION_HEADER_PREFIX: str = "## "
-    TAG_PATTERN: str = r"^\[[A-Za-z]+\]"  # see TODO.md
-    ERROR_TAIL_DIVIDER: str = "--- error output (untagged) ---"
+    TAG_PATTERN: str = r"^\[[A-Za-z]+\]"  # emitter's documented format
+    ERROR_TAIL_DIVIDER: str = "--- error output (raw) ---"
+    RECORD_FILE_ENV_VAR: str = "RUNLOG_RECORD_FILE"
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -190,52 +198,84 @@ def diff_text(old: str, new: str) -> str | None:
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-def filter_tagged_lines(output: str) -> str:
-    """Keep only lines matching `Constants.TAG_PATTERN`, dropping the rest."""
-    pattern = re.compile(Constants.TAG_PATTERN, re.IGNORECASE)
-    return "\n".join(line for line in output.splitlines() if pattern.match(line))
-
-
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-def build_recorded_output(output: str, *, tagged_only: bool, failed: bool) -> str:
-    """Apply `--tagged-only` filtering, appending the error tail on failure.
+def filter_matching_lines(output: str, pattern: str) -> list[str]:
+    """Return the lines of `output` matching `pattern`.
 
     Parameters
     ----------
     output : `str`
-        Raw captured output.
-    tagged_only : `bool`
-        Whether to filter to lines matching `Constants.TAG_PATTERN`.
-    failed : `bool`
-        If `True` and `tagged_only` is set, append everything printed after
-        the last tagged line (the likely error text) below a divider, so a
-        failing run's actual error isn't silently filtered out.
+        Text to filter, split on newlines.
+    pattern : `str`
+        Regex tested against the start of each line (`re.match`,
+        case-insensitive).
+
+    Returns
+    -------
+    lines : `list[str]`
+        Matching lines, in their original order.
+    """
+    compiled = re.compile(pattern, re.IGNORECASE)
+    return [line for line in output.splitlines() if compiled.match(line)]
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def build_recorded_output(
+        raw_output: str, *, record_file_content: str = "",
+        include_pattern: str | None = None, raw_on_failure: bool = False,
+        failed: bool = False,
+        ) -> str:
+    """Select what to record from a run's raw captured output.
+
+    Parameters
+    ----------
+    raw_output : `str`
+        The full raw captured output of the run.
+    record_file_content : `str`, optional
+        Content appended by the emitter (`log_tools.emitter` /
+        ``log_tools/emitter.sh``) via `Constants.RECORD_FILE_ENV_VAR`.
+        Used as-is (already chronological) when non-empty and
+        `include_pattern` is not given.
+    include_pattern : `str` or `None`, optional
+        A user-supplied regex (see `filter_matching_lines`). When given,
+        the result is a single chronological pass over `raw_output`,
+        keeping a line if it was written to the record file or matches
+        `include_pattern` -- so recorded output always preserves the
+        original print order, whichever mechanism selected each line.
+    raw_on_failure : `bool`, optional, default: `False`
+        If `True` and `failed` is `True`, append the full `raw_output`
+        under `Constants.ERROR_TAIL_DIVIDER` as a safety net against
+        losing a crash that never went through the emitter (e.g. an
+        unhandled traceback). This is a deliberate full duplicate
+        appendix, not chronologically merged into the curated view.
+    failed : `bool`, optional, default: `False`
+        Whether the run failed.
 
     Returns
     -------
     text : `str`
         The output text to record.
     """
-    if not tagged_only:
-        return output
-    filtered = filter_tagged_lines(output)
-    if not failed:
-        return filtered
-
-    pattern = re.compile(Constants.TAG_PATTERN, re.IGNORECASE)
-    lines = output.splitlines()
-    last_tagged_idx = -1
-    for i, line in enumerate(lines):
-        if pattern.match(line):
-            last_tagged_idx = i
-    tail = "\n".join(lines[last_tagged_idx + 1:])
-    if not tail.strip():
-        return filtered
-
-    return (
-            f"{filtered}\n{Constants.ERROR_TAIL_DIVIDER}\n{tail}" if filtered
-            else f"{Constants.ERROR_TAIL_DIVIDER}\n{tail}"
+    recorded = (
+            record_file_content.splitlines()
+            if record_file_content.strip() else None
             )
+    if recorded is None and include_pattern is None:
+        base = raw_output
+    elif include_pattern is None:
+        base = record_file_content
+    else:
+        recorded_set = set(recorded or [])
+        pattern = re.compile(include_pattern, re.IGNORECASE)
+        kept = [
+                line for line in raw_output.splitlines()
+                if line in recorded_set or pattern.match(line)
+                ]
+        base = "\n".join(kept)
+
+    if failed and raw_on_failure:
+        tail = f"{Constants.ERROR_TAIL_DIVIDER}\n{raw_output}"
+        base = f"{base}\n{tail}" if base else tail
+    return base
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -277,7 +317,6 @@ def render_log(entries: dict[str, Entry]) -> str:
 def record(
         *, log_file: Path, script_id: str, order: int, output: str,
         root: Path, label: str = "", failed: bool = False,
-        tagged_only: bool = False,
         ) -> None:
     """Upsert one script's entry in the run-log, replacing its prior state.
 
@@ -298,17 +337,15 @@ def record(
     failed : `bool`, optional, default: `False`
         If `True`, skip computing/rendering a diff against the previous
         run -- a diff is noise on a failed run.
-    tagged_only : `bool`, optional, default: `False`
-        If `True` and the previous run for this id had failed while this
-        one succeeds, diff against the previous run's output with its
-        untagged error tail (see `Constants.ERROR_TAIL_DIVIDER`) stripped
-        out, and note that the error was resolved instead of showing its
-        removal as part of the diff.
 
     Notes
     -----
     Writes are atomic (see `log_tools.functions.atomic_write`), so a crash
-    mid-write cannot corrupt the log.
+    mid-write cannot corrupt the log. If the previous run for this id had
+    failed and this one succeeds, and the previous run's output contains
+    `Constants.ERROR_TAIL_DIVIDER`, that tail is stripped before diffing
+    and a "- error resolved" note is shown instead of a raw diff of its
+    removal.
     """
     entries = parse_log(log_file)
     commit, dirty = get_git_info(root)
@@ -318,13 +355,12 @@ def record(
     resolved_note = False
     if not failed and previous is not None:
         old_for_diff = previous.output
-        if tagged_only and previous.failed:
+        if previous.failed and Constants.ERROR_TAIL_DIVIDER in previous.output:
             resolved_note = True
-            if Constants.ERROR_TAIL_DIVIDER in previous.output:
-                old_for_diff, _, _tail = previous.output.partition(
-                        Constants.ERROR_TAIL_DIVIDER,
-                        )
-                old_for_diff = old_for_diff.rstrip("\n")
+            old_for_diff, _, _tail = previous.output.partition(
+                    Constants.ERROR_TAIL_DIVIDER,
+                    )
+            old_for_diff = old_for_diff.rstrip("\n")
 
         diff = diff_text(old_for_diff, output)
         if diff is not None:
@@ -360,7 +396,8 @@ def record(
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 def run_and_record(
         *, log_file: Path, script_id: str, order: int, root: Path,
-        command: list[str], tagged_only: bool = False,
+        command: list[str], include_pattern: str | None = None,
+        raw_on_failure: bool = False,
         ) -> int:
     """Run a command, capture its output, record it, and pass through output.
 
@@ -376,9 +413,11 @@ def run_and_record(
         Git working-tree root used to resolve the commit hash/dirty flag.
     command : `list[str]`
         The command and its arguments to execute.
-    tagged_only : `bool`, optional, default: `False`
-        If `True`, only record lines matching `Constants.TAG_PATTERN`. On
-        a failed run, the untagged error tail is appended regardless --
+    include_pattern : `str` or `None`, optional
+        User-supplied regex additionally selecting raw output lines to
+        record -- see `build_recorded_output`.
+    raw_on_failure : `bool`, optional, default: `False`
+        Append the full raw captured output as a safety net on failure --
         see `build_recorded_output`.
 
     Returns
@@ -386,26 +425,48 @@ def run_and_record(
     returncode : `int`
         The wrapped command's exit code, unchanged, so callers (e.g. a
         ``set -eo pipefail`` bash script) still see failures.
-    """
-    proc = subprocess.Popen(
-            command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1,
-            )
-    captured: list[str] = []
-    assert proc.stdout is not None
-    for line in proc.stdout:
-        sys.stdout.write(line)
-        captured.append(line.rstrip("\n"))
-    proc.wait()
 
-    failed = proc.returncode != 0
+    Notes
+    -----
+    The child process is given `Constants.RECORD_FILE_ENV_VAR` pointing
+    at a fresh temp file. Scripts using `log_tools.emitter` (Python) or
+    ``log_tools/emitter.sh`` (Bash) append their tagged output lines to
+    it; that content becomes the recorded output (falling back to the
+    full raw output if the script never touches the emitter). The temp
+    file is always removed before returning.
+    """
+    record_fd, record_path_str = tempfile.mkstemp(prefix="runlog-record-")
+    os.close(record_fd)
+    record_path = Path(record_path_str)
+    try:
+        env = dict(
+                os.environ,
+                **{Constants.RECORD_FILE_ENV_VAR: str(record_path)},
+                )
+        proc = subprocess.Popen(
+                command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1, env=env,
+                )
+        captured: list[str] = []
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            sys.stdout.write(line)
+            captured.append(line.rstrip("\n"))
+        proc.wait()
+
+        failed = proc.returncode != 0
+        record_file_content = record_path.read_text()
+    finally:
+        record_path.unlink(missing_ok=True)
+
     output = build_recorded_output(
-            "\n".join(captured), tagged_only=tagged_only, failed=failed,
+            "\n".join(captured), record_file_content=record_file_content,
+            include_pattern=include_pattern, raw_on_failure=raw_on_failure,
+            failed=failed,
             )
 
     record(
             log_file=log_file, script_id=script_id, order=order,
             output=output, root=root, label=" ".join(command), failed=failed,
-            tagged_only=tagged_only,
             )
     return proc.returncode

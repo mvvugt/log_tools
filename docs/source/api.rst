@@ -8,3 +8,4 @@ This section documents the ``log_tools`` Python API for programmatic use.
 
    api/functions
    api/runlog
+   api/emitter
