@@ -15,6 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from log_tools import __version__
 from log_tools.runlog import (
     Constants,
     filter_matching_lines,
@@ -33,6 +34,10 @@ def _init_cmd_args() -> argparse.ArgumentParser:
                     "Record per-script run output into one compact, "
                     "project-wide Markdown log."
                     ),
+            )
+    parser.add_argument(
+            "--version", action="version",
+            version=f"%(prog)s {__version__}",
             )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

@@ -46,32 +46,30 @@ python -m pip install -e .
 ```
 
 ### Using Conda
-There are also conda yaml environment files in `./resources/conda/envs` that
+There are also conda yaml environment files in `./resources/conda` that
 have the same contents as `requirements.txt` but for conda packages, so all the
 pre-requisites.
 
 
 A new conda environment can be built using the command:
 ```
-conda env create --file ./resources/conda/envs/conda_create.yaml
+conda env create --file ./resources/conda/conda_create.yaml
 ```
 
 
 To add to an existing environment use:
 ```
-conda env update --file ./resources/conda/envs/conda_update.yaml
+conda env update --file ./resources/conda/conda_update.yaml
 ```
 
 Next the package can be installed:
-NOTE is is possible with make?
 ```
 make install
 ```
 
 ### Verify installation
 ```
-log_tools --version
-log_tools --help
+python -m log_tools --version
 ```
 
 
