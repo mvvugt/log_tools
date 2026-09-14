@@ -42,6 +42,9 @@ exclude = ["docs*", "resources*", "build*", "dist*"]
 [tool.setuptools.dynamic]
 version = { file = "VERSION" }
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [tool.ruff]
 line-length = 80
 target-version = "py311"
