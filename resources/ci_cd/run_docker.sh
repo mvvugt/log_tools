@@ -9,7 +9,7 @@
 # Usage: ./run_docker.sh <docker-image> <repo-root> [docs-build-dir]
 set -euo pipefail
 
-IMAGE="${1:?docker image required, e.g. mvvugt/pypan:complete-3.13}"  # TODO: replace with your actual CI image once built
+IMAGE="${1:?docker image required, e.g. mvanvugt/log_tools:master}"
 REPO_ROOT="${2:?repo root path required}"
 DOCS_BUILD_DIR="${3:-docs/build}"
 
@@ -25,6 +25,7 @@ docker run --rm -it \
     bash -c "
         set -euo pipefail
         pip install -e '.[dev]'
+        pip install -r resources/ci_cd/sphinx.txt
         ruff check .
         ruff format --check .
         pytest

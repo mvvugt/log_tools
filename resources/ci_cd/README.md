@@ -8,7 +8,9 @@ pushing.
 
     ./resources/ci_cd/run_docker.sh <docker-image> <repo-root>
 
-or, using the placeholder image baked into `build.sh`:
+or, using the project's CI image baked into `build.sh`
+(`mvanvugt/log_tools:master`, built via
+`resources/docker/log_tools/build.sh`):
 
     ./resources/ci_cd/build.sh
 

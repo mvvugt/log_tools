@@ -1,0 +1,46 @@
+{% set name = "log_tools" %}
+{% set version = "0.1.0" %}
+
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  git_url: https://gitlab.com/mvvugt/log_tools
+
+build:
+  # Inlines the install step; remove --no-deps if runtime deps are
+  # ever added to [project.dependencies] in pyproject.toml.
+  script: {{ PYTHON }} -m pip install . -vv --no-deps
+
+requirements:
+  host:
+    - python
+    - setuptools
+  run:
+    - python
+
+test:
+  source_files:
+    # Copy the tests over to the testing directory.
+    # NOTE: tests/ doesn't exist yet (deferred, see TODO.md) -- this
+    # recipe isn't run by anything until the test suite lands.
+    - tests/
+  requires:
+    - pytest
+  imports:
+    - log_tools
+  commands:
+    - pytest -vv tests/
+
+about:
+  home: "https://gitlab.com/mvvugt/log_tools"
+  license: MIT
+  license_family: MIT
+  license_file: LICENSE.txt
+  summary: "Record per-script run output into one compact, project-wide Markdown log."
+  description: "Record per-script run output into one compact, project-wide Markdown log."
+
+extra:
+  recipe-maintainers:
+    - mvvugt
