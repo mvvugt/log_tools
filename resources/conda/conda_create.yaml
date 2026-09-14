@@ -1,0 +1,14 @@
+name: log_tools
+channels:
+  - conda-forge
+dependencies:
+  - python=3.13
+  - pip
+  - pytest
+  - ruff
+  - bump2version
+  - python-build
+  - twine
+  - sphinx
+  - pip:
+      - -e ..
