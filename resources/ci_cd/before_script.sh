@@ -4,3 +4,4 @@ set -euo pipefail
 
 python -m pip install --upgrade pip
 pip install -e ".[dev]"
+pip install -r resources/ci_cd/sphinx.txt

@@ -16,8 +16,12 @@ or, using the placeholder image baked into `build.sh`:
 
 - `before_script.sh` — shared setup step, sourced via the
   `.before_script_template` YAML anchor in `.gitlab-ci.yml`.
+- `sphinx.txt` — doc-build dependencies (themes, MyST, notebook
+  support, etc.), installed by `before_script.sh`.
 - `pages.sh` — builds Sphinx docs and stages `public/` for GitLab Pages.
-- `run_docker.sh` — runs lint + tests (once the test suite exists) +
-  docs build inside the given Docker image, for local parity with CI.
+- `run_docker.sh` — runs lint + tests + docs build inside the given
+  Docker image, for local parity with CI. Builds from a clean
+  `git archive` checkout copied into a temp dir (not the live working
+  tree), so container-side artifacts never dirty the real repo.
 - `build.sh` — convenience wrapper around `run_docker.sh` with the
   project's image/repo-root pre-filled.
