@@ -155,13 +155,20 @@ Two subcommands: `run` wraps a command, streaming its output through
 live while capturing and recording it; `record` is the primitive
 underneath `run`, for when the output text is already in hand.
 
-Wrap a command (as wired into `src/mr_arrhythmia.sh`):
-NOTE update with real examples
+A full runnable example pipeline lives at
+`resources/examples/pipeline/` (a bash "fetch" step and a python
+"process" step, both wrapped with `runlog run`, plus a `runlog record`
+step). Run it directly:
 
 ```bash
-runlog run --id id_mapping --order 10 --root "$ROOT" -- \
-    mamba run --no-capture-output -n "$ENV" \
-    "$ROOT"/src/id_mapping.py build
+./resources/examples/pipeline/run_pipeline.sh
+```
+
+Wrap a command (as wired into `resources/examples/pipeline/steps/fetch_data.sh`):
+
+```bash
+runlog run --id fetch_data --order 10 --root "$ROOT" -- \
+    "$ROOT"/resources/examples/pipeline/steps/fetch_data.sh "$WORK_DIR"
 ```
 
 Record already-known output directly (e.g. a step whose real output

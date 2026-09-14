@@ -80,3 +80,16 @@ out). ``log_debug`` is the opposite -- off by default, opt in with
 records. If a script never touches the emitter, ``runlog run`` falls
 back to recording the full raw captured output, so untouched scripts
 keep working unchanged.
+
+Example Pipeline
+-----------------
+
+``resources/examples/pipeline/`` contains a small, runnable example
+pipeline exercising ``runlog run`` (a bash step and a python step, both
+using the emitter above) and ``runlog record`` together. Run it with:
+
+.. code-block:: bash
+
+   ./resources/examples/pipeline/run_pipeline.sh
+
+See ``resources/examples/README.md`` for details.
