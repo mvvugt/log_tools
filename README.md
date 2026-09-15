@@ -20,10 +20,11 @@ documentation).
 
 ## Installation instructions
 At present, `log_tools` is undergoing development and no packages exist yet on
-PyPi. Therefore it is recommended that you install in either of the two ways
-below. Please keep in mind that development is primarily carried out on macOS
+PyPi. Installation is outlined here.
+
+Please keep in mind that development is primarily carried out on macOS
 with Python v3.13, and testing is additionally carried out on Linux (HPC
-clusters, and the CI pipeline's Docker container) across Python 3.11-3.13.
+clusters, and the CI pipeline's Docker container) across Python 3.9-3.13.
 
 To install `log_tools`, please use the git repo:
 ```
@@ -35,9 +36,7 @@ cd log_tools
 
 #### Using pip
 You can install the dependencies using pip from the root of the cloned
-repository.
-
-Install the dependencies:
+repository:
 ```
 python -m pip install --upgrade -r requirements.txt
 ```
@@ -47,14 +46,16 @@ There are also conda yaml environment files in `./resources/conda` that
 have the same contents as `requirements.txt` but for conda packages, so all the
 pre-requisites.
 
-
 A new conda environment can be built using the command:
 ```
 conda env create --file ./resources/conda/conda_create.yaml
+# activate environment for package installation
+conda activate log_tools
 ```
 
 To add to an existing environment use:
 ```
+conda activate <env_name>
 conda env update --file ./resources/conda/conda_update.yaml
 ```
 
@@ -70,6 +71,68 @@ python -m pip install .
 ```
 
 For an editable (developer) install, see [Development](#development) below.
+
+### Bash-specific installation
+The steps above install `runlog`, `runlog-emitter-path`, and
+`runlog-setup-path` as console-scripts into whichever environment's
+`bin/` directory (`pip venv` or `conda env`) you installed into. They resolve
+automatically in any shell where that environment is already active, but not
+in a shell that never activates it (e.g. SLURM `sbatch`, cron, etc.).
+If you plan to call these from that kind of context, pick one of
+the following, once, up front:
+
+#### pipx
+[`pipx`](https://pipx.pypa.io/) installs a CLI tool into its own
+isolated environment (unrelated to conda) and symlinks its commands
+into a single, stable location on `PATH` (`~/.local/bin` by default).
+This is a one-time, user-wide install: install once, reachable in every
+shell (interactive or not) from then on, no matter how many project
+environments come and go afterward.
+```
+pipx install .
+pipx ensurepath
+```
+`pipx ensurepath` only needs running once ever (per machine/user); it
+adds `~/.local/bin` to `PATH` in your shell's rc file if it isn't
+there already. Note `pipx` does **not** make `import log_tools`
+available in Python -- that still needs the pip/conda install above,
+per project.
+
+#### PATH export
+Add the specific environment's `bin/` directory to `PATH`, e.g. in your
+shell's rc file:
+```
+export PATH="$(conda info --base)/envs/<env_name>/bin:$PATH"
+```
+Simple, but per-environment: repeat for every new project env you create.
+
+#### Symlink
+If you already keep a personal `bin/` directory (e.g. `~/bin`) on `PATH`
+for this purpose across tools, symlink the three commands into it instead
+of adding a `log_tools`-specific `PATH` entry:
+```
+ln -sf "$(conda info --base)/envs/<env_name>/bin"/{runlog,runlog-emitter-path,runlog-setup-path} ~/bin/
+```
+Same per-environment caveat as the `PATH` export option -- this just
+consolidates where you point it.
+
+#### Remarks
+Whichever option you pick, this only helps where that rc file actually
+gets sourced. If you experience problems, add the relevant line 
+(`export PATH=...` or the symlinks) directly to the job script instead.
+
+**If you use `pipx` alongside a project's conda/pip install, keep both
+on the same version.**
+Version skew between the teo installs can silently produce inconsistent log
+entries depending on which one happened to resolve first.
+**Prevent** this by upgrading both together whenever you bump `log_tools`'s
+version, rather than upgrading one and forgetting the other.
+**Detect** a mismatch with `log_tools --version`, running it both
+with and without the project's conda env active and compare.
+**Resolve** by reinstalling/upgrading whichever is behind, or by making `PATH`
+ordering deliberate (e.g. only let the project env's `bin/` take
+precedence over pipx's `~/.local/bin` while you specifically want that
+env's version to win).
 
 ### Verify installation
 ```

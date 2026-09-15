@@ -19,13 +19,14 @@ Python:
 
    python -c "from log_tools.emitter import log_info; log_info('hello from python')"
 
-Bash (after ``pip install log_tools``, so ``runlog-emitter-path`` is on
-``PATH``):
+Bash:
 
 .. code-block:: bash
 
    source "$(runlog-emitter-path)" && log_info "hello from bash"
 
+Refer to README's "Bash-specific installation" section if you encounter
+problems.
 Both print immediately; nothing is written to disk unless
 ``RUNLOG_RECORD_FILE`` happens to be set in the environment (see
 "Producing Recorded Output" below).
@@ -133,9 +134,7 @@ Python:
    with runlog_setup():
        log_info("doing work")
 
-Bash (after ``pip install log_tools``, so ``runlog-setup-path`` is on
-``PATH``; sources ``emitter.sh`` internally, so ``log_info`` etc. are
-available too):
+Bash:
 
 .. code-block:: bash
 
