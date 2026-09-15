@@ -45,6 +45,41 @@ def get_git_info(root: Path) -> tuple[str, bool]:
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def resolve_git_root(root: Path | None) -> Path:
+    """Resolve the git working-tree root, defaulting from cwd.
+
+    Parameters
+    ----------
+    root : `Path` or `None`
+        Explicit root, if already known/given.
+
+    Returns
+    -------
+    root : `Path`
+        `root` unchanged if given, else the result of
+        `git rev-parse --show-toplevel` run from cwd.
+
+    Raises
+    ------
+    RuntimeError
+        If `root` is `None` and cwd is not inside a git working tree.
+    """
+    if root is not None:
+        return root
+    try:
+        top = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                check=True, capture_output=True, text=True,
+                ).stdout.strip()
+        return Path(top)
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        raise RuntimeError(
+                "--root not given and cwd is not inside a git "
+                "working tree",
+                ) from exc
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 def atomic_write(path: Path, content: str) -> None:
     """Write `content` to `path` atomically.
 
