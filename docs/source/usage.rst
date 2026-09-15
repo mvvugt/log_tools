@@ -1,10 +1,46 @@
 Usage Guide
 ===========
 
+``log_tools`` contains two things: the emitter and ``runlog``. Each
+works entirely standalone (see below); the "Producing Recorded Output"
+section further down covers how they combine.
+
+Emitter (standalone)
+---------------------
+
+The emitter is a tagged logger: ``log_info``/``log_warn``/``log_error``/
+``log_debug``. Every call always prints to stdout (info/debug) or
+stderr (warn/error), regardless of anything else -- it needs no other
+part of ``log_tools`` to be useful.
+
+Python:
+
+.. code-block:: bash
+
+   python -c "from log_tools.emitter import log_info; log_info('hello from python')"
+
+Bash (after ``pip install log_tools``, so ``runlog-emitter-path`` is on
+``PATH``):
+
+.. code-block:: bash
+
+   source "$(runlog-emitter-path)" && log_info "hello from bash"
+
+Both print immediately; nothing is written to disk unless
+``RUNLOG_RECORD_FILE`` happens to be set in the environment (see
+"Producing Recorded Output" below).
+
+``runlog`` (standalone)
+------------------------
+
 ``runlog`` provides two subcommands. ``run`` wraps a command: runs it,
 streams its output live, captures it, and records it -- the exit code is
 passed through unchanged. ``record`` is the primitive underneath ``run``,
-for when the output text is already in hand.
+for when the output text is already in hand. Neither requires the
+wrapped/recorded script to use the emitter at all -- a script that
+never touches the emitter still gets its full raw output recorded (see
+``run``'s ``--raw-on-failure`` and the fallback behaviour described
+under "Producing Recorded Output").
 
 Shared Options
 --------------
@@ -62,6 +98,10 @@ Shared Options
 Producing Recorded Output
 --------------------------
 
+This section covers **combined** usage -- the emitter and ``runlog``
+working together. For either on its own, see the standalone sections
+above.
+
 ``runlog run`` sets ``RUNLOG_RECORD_FILE`` (a temp file path) in the
 child process's environment. Scripts call the official emitter functions
 instead of hand-typing tagged prefixes, so what ends up in ``RUN_LOG.md``
@@ -84,9 +124,10 @@ keep working unchanged.
 Example Pipeline
 -----------------
 
-``resources/examples/pipeline/`` contains a small, runnable example
-pipeline exercising ``runlog run`` (a bash step and a python step, both
-using the emitter above) and ``runlog record`` together. Run it with:
+This is a **combined** example. ``resources/examples/pipeline/``
+contains a small, runnable example pipeline exercising ``runlog run``
+(a bash step and a python step, both using the emitter above) and
+``runlog record`` together. Run it with:
 
 .. code-block:: bash
 

@@ -3,13 +3,19 @@
 __version__: `0.1.0`
 
 A small, stdlib-only package for logging/pipeline-tracking tools.
-Currently contains **`runlog`**, which records every pipeline script's
-run into **one compact, project-wide Markdown log** (`RUN_LOG.md` by
-default), instead of scrolling back through terminal output, or one
-log file per script piling up over time.
+It contains two things: an **emitter** (`log_tools.emitter` in
+Python, `log_tools/emitter.sh` in Bash) providing tagged
+`log_info`/`log_warn`/`log_error`/`log_debug` calls, and **`runlog`**,
+which records every pipeline script's run into **one compact,
+project-wide Markdown log** (`RUN_LOG.md` by default). When a script
+is run via `runlog run`, its emitter calls are automatically captured
+into that shared log.
 
-There is [online](https://mvvugt.gitlab.io/log_tools/index.html)
-documentation for log_tools.
+For standalone emitter-only and `runlog`-only usage, and full
+CLI/record-semantics details, see the
+[online usage guide](https://mvvugt.gitlab.io/log_tools/usage.html)
+(or the rest of the [online](https://mvvugt.gitlab.io/log_tools/index.html)
+documentation).
 
 
 ## Installation instructions
@@ -86,6 +92,11 @@ pytest ./tests
 Two subcommands: `run` wraps a command, streaming its output through
 live while capturing and recording it; `record` is the primitive
 underneath `run`, for when the output text is already in hand.
+`runlog run` sets the `RUNLOG_RECORD_FILE` environment variable for
+the wrapped command; the emitter checks it and, when set, appends its
+`log_info`/`log_warn`/`log_error`/`log_debug` calls to that file too
+— that's how emitter output from separate pipeline scripts ends up
+combined in one `RUN_LOG.md`.
 
 A full runnable example pipeline lives at
 `resources/examples/pipeline/` (a bash "fetch" step and a python
@@ -129,7 +140,7 @@ python -m pip install -e .
 python .setup_git_hooks.py
 ```
 
-#### Git Hooks Configuration
+### Git Hooks Configuration
 When setting up a development environment, the `setup-hooks` command
 configures Git hooks to enforce conventional commit message formatting and
 spell check using `codespell`.
@@ -173,7 +184,7 @@ python .setup_git_hooks.py
 ```
 
 
-### Change log
+## Change log
 
 See `CHANGELOG.md` for the full history. Latest (`[Unreleased]`):
 

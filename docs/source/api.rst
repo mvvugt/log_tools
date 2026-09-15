@@ -7,5 +7,5 @@ This section documents the ``log_tools`` Python API for programmatic use.
    :maxdepth: 2
 
    api/functions
-   api/runlog
    api/emitter
+   api/runlog
