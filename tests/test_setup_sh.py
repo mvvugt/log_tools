@@ -144,6 +144,51 @@ def test_raw_output_captured_on_plain_exit_without_emitter_calls(
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 @pytest.mark.skipif(_SKIP, reason=_SKIP_REASON)
+def test_runlog_order_env_var_overrides_autoincrement(
+        git_repo: Path,
+        ) -> None:
+    """`RUNLOG_ORDER`, if set, wins over the PPID-scoped counter --
+    needed for a script submitted to a batch scheduler or re-invoked
+    from a fresh orchestrator process in a later pipeline stage."""
+    script = git_repo / "pinned_order_step.sh"
+    _write_step_script(script, 'log_info "pinned"')
+
+    env = dict(os.environ, RUNLOG_ORDER="4242")
+    result = subprocess.run(
+            [str(script)], cwd=git_repo, capture_output=True, text=True,
+            env=env,
+            )
+
+    assert result.returncode == 0, result.stderr
+    text = (git_repo / "RUN_LOG.md").read_text()
+    assert _order_of(text, "pinned_order_step") == 4242
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+@pytest.mark.skipif(_SKIP, reason=_SKIP_REASON)
+def test_runlog_script_id_env_var_overrides_basename(
+        git_repo: Path,
+        ) -> None:
+    """`RUNLOG_SCRIPT_ID`, if set, wins over the basename-derived
+    default -- needed when one shared script self-registers multiple
+    distinct identities (e.g. one call per cohort)."""
+    script = git_repo / "shared_extractor.sh"
+    _write_step_script(script, 'log_info "cohort run"')
+
+    env = dict(os.environ, RUNLOG_SCRIPT_ID="cohort_ahola")
+    result = subprocess.run(
+            [str(script)], cwd=git_repo, capture_output=True, text=True,
+            env=env,
+            )
+
+    assert result.returncode == 0, result.stderr
+    text = (git_repo / "RUN_LOG.md").read_text()
+    assert _order_of(text, "cohort_ahola") > 0
+    assert "] shared_extractor" not in text
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+@pytest.mark.skipif(_SKIP, reason=_SKIP_REASON)
 def test_env_var_overrides_log_file_and_root(
         git_repo: Path, tmp_path: Path,
         ) -> None:

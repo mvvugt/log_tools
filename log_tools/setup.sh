@@ -14,6 +14,17 @@
 # Call it at most once per script, before any output the script wants
 # captured.
 #
+# RUNLOG_SCRIPT_ID/RUNLOG_ORDER env vars, if set, override the
+# auto-derived id/order outright (mirroring `log_tools.setup.
+# runlog_setup()`'s script_id/order params) -- needed whenever a step's
+# real run-time process ancestry doesn't match its logical pipeline
+# position: a script submitted to a batch scheduler (its $PPID at
+# execution time has no relation to the submitting shell), a script
+# invoked multiple times with a distinct identity each time (e.g. one
+# per-cohort call of a shared extraction script), or a step re-invoked
+# from a fresh orchestrator process in a later, separate stage of a
+# multi-stage pipeline.
+#
 # Sources emitter.sh internally so one `source "$(runlog-setup-path)"`
 # line gives a script both `runlog_setup` and `log_info`/`log_warn`/
 # `log_error`/`log_debug`.
@@ -190,11 +201,20 @@ _runlog_resolve_order() {
 # -----------------------------------------------------------------------
 runlog_setup() {
     local caller_script base
-    caller_script="${BASH_SOURCE[1]}"
-    base="$(basename "${caller_script}")"
-    _RUNLOG_SCRIPT_ID="${base%.*}"
-    _RUNLOG_PPID="${PPID}"
-    _RUNLOG_ORDER="$(_runlog_resolve_order "${_RUNLOG_PPID}" "${_RUNLOG_SCRIPT_ID}")"
+    if [[ -n "${RUNLOG_SCRIPT_ID:-}" ]]; then
+        _RUNLOG_SCRIPT_ID="${RUNLOG_SCRIPT_ID}"
+    else
+        caller_script="${BASH_SOURCE[1]}"
+        base="$(basename "${caller_script}")"
+        _RUNLOG_SCRIPT_ID="${base%.*}"
+    fi
+
+    if [[ -n "${RUNLOG_ORDER:-}" ]]; then
+        _RUNLOG_ORDER="${RUNLOG_ORDER}"
+    else
+        _RUNLOG_PPID="${PPID}"
+        _RUNLOG_ORDER="$(_runlog_resolve_order "${_RUNLOG_PPID}" "${_RUNLOG_SCRIPT_ID}")"
+    fi
 
     _RUNLOG_ROOT="${RUNLOG_ROOT:-}"
     if [[ -z "${_RUNLOG_ROOT}" ]]; then

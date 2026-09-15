@@ -242,6 +242,49 @@ def test_concurrent_siblings_do_not_lose_an_order_update(
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_order_override_bypasses_autoincrement(git_repo: Path) -> None:
+    """An explicit `order=` wins over the PPID-scoped counter -- needed
+    for steps whose real process ancestry (a batch-submitted job, a
+    later stage of a manually re-invoked pipeline) doesn't reflect their
+    logical pipeline position."""
+    name = _unique_step_name("order_override")
+    path = git_repo / f"{name}.py"
+    path.write_text(
+            "from log_tools.setup import runlog_setup\n"
+            "with runlog_setup(order=4242):\n"
+            '    print("pinned order")\n',
+            )
+
+    result = _run_step(path, cwd=git_repo)
+
+    assert result.returncode == 0, result.stderr
+    text = (git_repo / "RUN_LOG.md").read_text()
+    assert _order_of(text, name) == 4242
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_script_id_override(git_repo: Path) -> None:
+    """An explicit `script_id=` wins over the filename-derived default --
+    needed when one shared script self-registers multiple distinct
+    identities (e.g. one call per cohort)."""
+    name = _unique_step_name("filename_stem")
+    override_id = _unique_step_name("overridden_id")
+    path = git_repo / f"{name}.py"
+    path.write_text(
+            "from log_tools.setup import runlog_setup\n"
+            f'with runlog_setup(script_id="{override_id}"):\n'
+            '    print("overridden id")\n',
+            )
+
+    result = _run_step(path, cwd=git_repo)
+
+    assert result.returncode == 0, result.stderr
+    text = (git_repo / "RUN_LOG.md").read_text()
+    assert _order_of(text, override_id) > 0
+    assert f"] {name}" not in text
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 def test_stale_order_state_is_discarded(git_repo: Path) -> None:
     """An order-state file older than the TTL is treated as a dead run
     and the counter restarts, rather than continuing a stale sequence."""

@@ -246,6 +246,14 @@ class RunlogSetup:
     script_id : `str` or `None`, optional
         Overrides the automatically derived id
         (`Path(sys.argv[0]).stem`).
+    order : `int` or `None`, optional
+        Overrides the automatically derived order (`resolve_order()`,
+        scoped to `os.getppid()`). Needed whenever a step's real
+        run-time process ancestry doesn't match its logical pipeline
+        position -- e.g. a script submitted to a batch scheduler (its
+        `PPID` at execution time has no relation to the submitting
+        shell), or a step re-invoked from a fresh orchestrator process
+        in a later, separate stage of a multi-stage pipeline.
     log_file : `Path` or `None`, optional
         Overrides `Constants.LOG_FILE_ENV_VAR`/default resolution.
     root : `Path` or `None`, optional
@@ -268,11 +276,13 @@ class RunlogSetup:
 
     def __init__(
             self, *, script_id: str | None = None,
+            order: int | None = None,
             log_file: Path | None = None, root: Path | None = None,
             include_pattern: str | None = None,
             raw_on_failure: bool = True,
             ) -> None:
         self._script_id_override = script_id
+        self._order_override = order
         self._log_file_override = log_file
         self._root_override = root
         self._include_pattern = include_pattern
@@ -286,7 +296,11 @@ class RunlogSetup:
                 self._log_file_override, self.root,
                 )
         self.script_id = self._script_id_override or Path(sys.argv[0]).stem
-        self.order = resolve_order(os.getppid(), self.script_id)
+        self.order = (
+                self._order_override
+                if self._order_override is not None
+                else resolve_order(os.getppid(), self.script_id)
+                )
 
         record_fd, record_path_str = tempfile.mkstemp(
                 prefix="runlog-record-",
@@ -356,7 +370,8 @@ class RunlogSetup:
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 def runlog_setup(
-        *, script_id: str | None = None, log_file: Path | None = None,
+        *, script_id: str | None = None, order: int | None = None,
+        log_file: Path | None = None,
         root: Path | None = None, include_pattern: str | None = None,
         raw_on_failure: bool = True,
         ) -> RunlogSetup:
@@ -364,7 +379,7 @@ def runlog_setup(
 
     Parameters
     ----------
-    script_id, log_file, root, include_pattern, raw_on_failure
+    script_id, order, log_file, root, include_pattern, raw_on_failure
         See `RunlogSetup`.
 
     Returns
@@ -373,7 +388,7 @@ def runlog_setup(
         Use as ``with runlog_setup(): ...``.
     """
     return RunlogSetup(
-            script_id=script_id, log_file=log_file, root=root,
+            script_id=script_id, order=order, log_file=log_file, root=root,
             include_pattern=include_pattern,
             raw_on_failure=raw_on_failure,
             )
