@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..conftest import REPO_ROOT, commit_hash, git_repo, run_cli  # noqa: F401 (fixture)
+from ..conftest import REPO_ROOT, commit_hash, run_cli
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

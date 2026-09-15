@@ -15,7 +15,7 @@ from log_tools.runlog import (
     run_and_record,
 )
 
-from .conftest import commit_hash, make_dirty
+from .conftest import commit_hash
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -59,7 +59,10 @@ def _init_cmd_args() -> argparse.ArgumentParser:
             )
     common.add_argument(
             "--log-file", type=Path, default=None,
-            help=f"Log file path (default: <root>/{Constants.DEFAULT_LOG_NAME}).",
+            help=(
+                    "Log file path (default: "
+                    f"<root>/{Constants.DEFAULT_LOG_NAME})."
+                    ),
             )
     common.add_argument(
             "-i", "--include-pattern", default=None,
@@ -142,7 +145,9 @@ def _resolve_root(root_arg: Path | None) -> Path:
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 def main() -> None:
     """Entry point for the CLI."""
-    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+    logging.basicConfig(
+            level=logging.INFO, format="[%(levelname)s] %(message)s",
+            )
     parser = _init_cmd_args()
     args = _parse_cmd_args(parser)
 

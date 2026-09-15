@@ -18,7 +18,9 @@ import pytest
 
 from .conftest import REPO_ROOT
 
-PIPELINE_SCRIPT = REPO_ROOT / "resources" / "examples" / "pipeline" / "run_pipeline.sh"
+PIPELINE_SCRIPT = (
+        REPO_ROOT / "resources" / "examples" / "pipeline" / "run_pipeline.sh"
+        )
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
