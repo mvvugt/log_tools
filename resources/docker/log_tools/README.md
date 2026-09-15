@@ -22,3 +22,18 @@ versions instead of drifting against a separate image `requirements.txt`.
 This only builds the image locally — pushing it to wherever
 `.gitlab-ci.yml`/CI pulls `mvanvugt/log_tools:master` from is a
 separate, manual step.
+
+`build.sh` also labels the image with a sha256 hash of this
+`Dockerfile`, so later runs can tell whether the image is stale (i.e.
+the `Dockerfile` changed since it was last built).
+
+## Checking staleness
+
+    ./check_stale.sh
+
+Compares the current `Dockerfile`'s hash against the image's
+`dockerfile_hash` label; prints `up to date` or `stale` (exit 1 if
+stale or the image doesn't exist yet). `resources/ci_cd/run_docker.sh`
+already calls this automatically before each local debug run and
+warns if it fails — you only need to run it directly if you want to
+check outside of that flow.

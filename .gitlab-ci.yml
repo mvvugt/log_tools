@@ -20,11 +20,19 @@
 #     - .cache/pip
 
 stages:
+  - test
   - deploy
 
 .before_script_template: &before_script_template
   before_script:
     - source resources/ci_cd/before_script.sh
+
+test:
+  <<: *before_script_template
+  stage: test
+  image: mvanvugt/log_tools:master
+  script:
+    - bash resources/ci_cd/test.sh
 
 pages:
   <<: *before_script_template

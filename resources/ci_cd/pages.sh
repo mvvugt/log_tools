@@ -3,6 +3,11 @@
 # as the artifact path, per .gitlab-ci.yml `pages:` job).
 set -euo pipefail
 
+if [[ -d resources/images ]]; then
+    mkdir -p docs/source/_static
+    cp -r resources/images docs/source/_static/images
+fi
+
 cd docs
 make html
 cd ..

@@ -57,8 +57,6 @@ data/temp/
 *cache*/
 bin/
 
-# LLM stuff
-CLAUDE.md
+# personal helpers
 TODO.md
-AGENTS.md
 graphify*
