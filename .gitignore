@@ -39,6 +39,7 @@ __pycache__
 dist/
 build/
 docs/build/
+public/
 
 # R filtes
 *.Rdata

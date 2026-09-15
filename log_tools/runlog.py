@@ -49,45 +49,40 @@ class Constants:
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 @dataclass
 class Entry:
-    """One script's latest recorded run.
-
-    Attributes
-    ----------
-    script_id : `str`
-        Identifier passed via ``--id``, also the section key.
-    order : `int`
-        Sort key controlling section order in the rendered file.
-    timestamp : `str`
-        Local timestamp of the run, ``YYYY-MM-DD HH:MM:SS``.
-    commit : `str`
-        Short git commit hash active at run time (``"unknown"`` if not a
-        git repo or git is unavailable).
-    dirty : `bool`
-        Whether the working tree had uncommitted changes at run time.
-    label : `str`
-        Free-text label describing what was run (e.g. the command line),
-        shown next to the section title.
-    output : `str`
-        The captured output text for this run.
-    diff : `str` or `None`, optional
-        Unified diff vs the previous run's output, shown as a sibling
-        block above `output` when not `None`. Computed fresh at record
-        time -- never re-derived from a parsed file, so it is never
-        nested inside the ``Output:`` code fence.
-    failed : `bool`, optional, default: `False`
-        Whether this run's underlying command failed. Only ever set
-        `True` via `run`'s exit-code check; `record` never sets it.
-    """
+    """One script's latest recorded run."""
 
     script_id: str
+    """Identifier passed via ``--id``, also the section key."""
+
     order: int
+    """Sort key controlling section order in the rendered file."""
+
     timestamp: str
+    """Local timestamp of the run, ``YYYY-MM-DD HH:MM:SS``."""
+
     commit: str
+    """Short git commit hash active at run time (``"unknown"`` if not
+    a git repo or git is unavailable)."""
+
     dirty: bool
+    """Whether the working tree had uncommitted changes at run time."""
+
     label: str
+    """Free-text label describing what was run (e.g. the command
+    line), shown next to the section title."""
+
     output: str
+    """The captured output text for this run."""
+
     diff: str | None = None
+    """Unified diff vs the previous run's output, shown as a sibling
+    block above `output` when not `None`. Computed fresh at record
+    time -- never re-derived from a parsed file, so it is never nested
+    inside the ``Output:`` code fence."""
+
     failed: bool = False
+    """Whether this run's underlying command failed. Only ever set
+    `True` via `run`'s exit-code check; `record` never sets it."""
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

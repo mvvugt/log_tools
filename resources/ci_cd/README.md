@@ -23,9 +23,9 @@ or, using the project's CI image baked into `build.sh`
 
        ./resources/ci_cd/build.sh
 
-   This checks out `HEAD` (committed files only) into a temp
-   directory via `git archive`, bind-mounts it into
-   `mvanvugt/log_tools:master`, and runs
+   This clones `HEAD` (committed files only, with a real `.git`) into
+   a temp directory, bind-mounts it into `mvanvugt/log_tools:master`,
+   and runs
    `before_script.sh` -> `test.sh` -> `pages.sh` inside it — the exact
    same scripts `.gitlab-ci.yml`'s `test` and `pages` jobs run. When it
    finishes, the built site is copied back to `public/` in the real
@@ -50,11 +50,13 @@ pipeline:
   `before_script.sh` (install deps) -> `test.sh` (lint + pytest) ->
   `pages.sh` (build docs, stage `public/`).
 - Both run inside the same Docker image, `mvanvugt/log_tools:master`.
-- Both build from committed files only — CI clones the repo fresh;
-  locally, `run_docker.sh` uses `git archive HEAD` into a temp
-  directory instead of bind-mounting your live working tree, so
-  uncommitted changes can't accidentally pass (or fail) a local run
-  that CI would see differently.
+- Both build from committed files only, with a real `.git` present —
+  CI clones the repo fresh; locally, `run_docker.sh` does a local
+  `git clone` of `REPO_ROOT` into a temp directory instead of
+  bind-mounting your live working tree, so uncommitted changes can't
+  accidentally pass (or fail) a local run that CI would see
+  differently, and code that needs to resolve its git root (like
+  `runlog`'s own `--root` default) still has one to find.
 
 The one thing that differs: GitLab's own CI variables
 (`$CI_COMMIT_BRANCH`, `$CI_DEFAULT_BRANCH`) aren't set when running
@@ -90,11 +92,14 @@ always pulls the tag fresh, so the check only applies to local runs.
 
 This repo doesn't currently have a `resources/images/` directory (the
 "marvel" template this setup was adapted from did, and copied it into
-the docs build). `pages.sh` already checks for it:
+the docs build). `pages.sh` always creates `docs/source/_static`
+(matching `conf.py`'s `html_static_path`, so it exists whether or not
+this project ever adds images -- no manual setup needed per project),
+and separately copies `resources/images/` into it if present:
 
 ```bash
+mkdir -p docs/source/_static
 if [[ -d resources/images ]]; then
-    mkdir -p docs/source/_static
     cp -r resources/images docs/source/_static/images
 fi
 ```
@@ -113,9 +118,11 @@ needed:
 ## Files
 
 - `before_script.sh` — shared setup step, sourced via the
-  `.before_script_template` YAML anchor in `.gitlab-ci.yml`. Installs
-  the project (`pip install -e ".[dev]"`) and the Sphinx doc-build
-  dependencies.
+  `.before_script_template` YAML anchor in `.gitlab-ci.yml`. Marks the
+  workspace as a git `safe.directory` (needed locally, where the
+  container runs as root over a host-owned bind mount; a no-op in real
+  CI), then installs the project (`pip install -e ".[dev]"`) and the
+  Sphinx doc-build dependencies.
 - `test.sh` — lints (`ruff check`) and runs the test suite (`pytest`).
   Used by both the GitLab `test` job and `run_docker.sh`, so CI and
   local runs can't drift apart. Deliberately does not run
@@ -129,9 +136,9 @@ needed:
   (see above).
 - `run_docker.sh` — runs `before_script.sh` -> `test.sh` -> `pages.sh`
   inside the given Docker image, for local parity with CI. Builds from
-  a clean `git archive` checkout copied into a temp dir (not the live
-  working tree), so container-side artifacts never dirty the real
-  repo. Warns (doesn't block) if the image is stale — see "Is my image
-  stale?" above.
+  a clean local `git clone` into a temp dir under the repo (not the
+  live working tree), so container-side artifacts never dirty the real
+  repo and the checkout still has a real `.git`. Warns (doesn't block)
+  if the image is stale — see "Is my image stale?" above.
 - `build.sh` — convenience wrapper around `run_docker.sh` with the
   project's image/repo-root pre-filled.

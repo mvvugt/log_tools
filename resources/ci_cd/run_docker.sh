@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # Run the same Docker image GitLab CI uses, locally, for pre-commit
-# debugging. Populates a temp directory with a clean `git archive`
-# checkout (not the live working tree) and bind-mounts that, so
+# debugging. Populates a temp directory with a clean `git clone` of
+# REPO_ROOT (not the live working tree) and bind-mounts that, so
 # container-side build artifacts never land in the real repo and the
 # build only sees committed files — closer to what CI actually sees,
-# without marvel's full docker-cp/rsync machinery. Runs the exact same
-# before_script.sh -> test.sh -> pages.sh sequence as .gitlab-ci.yml's
-# `test`/`pages` jobs, so `public/` ends up identical to what CI would
-# publish (per pages.sh's own docs/build/html -> public/ move).
+# without marvel's full docker-cp/rsync machinery. A local clone (not
+# `git archive`) so the checkout has a real `.git`, matching a GitLab
+# runner's own clone step -- code that resolves its git root (e.g.
+# `runlog`'s `--root` default, via `git rev-parse --show-toplevel`)
+# needs one to run at all; `git archive` alone leaves no `.git`, so
+# anything relying on it would pass in real CI but fail here. Runs the
+# exact same before_script.sh -> test.sh -> pages.sh sequence as
+# `.gitlab-ci.yml`'s `test`/`pages` jobs, so `public/` ends up
+# identical to what CI would publish (per pages.sh's own
+# docs/build/html -> public/ move).
 #
 # Usage: ./run_docker.sh <docker-image> <repo-root> [output-dir]
 set -euo pipefail
@@ -32,7 +38,10 @@ trap 'rm -rf "${TMP_CHECKOUT}"' EXIT
 # one -- Docker's file-sharing check matches on the resolved path.
 TMP_CHECKOUT="$(cd "${TMP_CHECKOUT}" && pwd -P)"
 
-git -C "${REPO_ROOT}" archive HEAD | tar -x -C "${TMP_CHECKOUT}"
+# --local clones via the filesystem (hardlinking objects, no network);
+# the checked-out working tree reflects HEAD only, same as `git
+# archive` -- uncommitted changes in REPO_ROOT still can't leak in.
+git clone --quiet --local "${REPO_ROOT}" "${TMP_CHECKOUT}"
 
 docker run --rm -it \
     -v "${TMP_CHECKOUT}:/workspace" \
