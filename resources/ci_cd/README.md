@@ -116,9 +116,12 @@ needed:
   `.before_script_template` YAML anchor in `.gitlab-ci.yml`. Installs
   the project (`pip install -e ".[dev]"`) and the Sphinx doc-build
   dependencies.
-- `test.sh` — lints (`ruff check`, `ruff format --check`) and runs the
-  test suite (`pytest`). Used by both the GitLab `test` job and
-  `run_docker.sh`, so CI and local runs can't drift apart.
+- `test.sh` — lints (`ruff check`) and runs the test suite (`pytest`).
+  Used by both the GitLab `test` job and `run_docker.sh`, so CI and
+  local runs can't drift apart. Deliberately does not run
+  `ruff format --check`: the codebase predates a formatter pass and
+  its hand-written style doesn't match ruff's opinionated formatter,
+  so that check would fail on style alone, not real issues.
 - `sphinx.txt` — doc-build dependencies (themes, MyST, notebook
   support, etc.), installed by `before_script.sh`.
 - `pages.sh` — builds Sphinx docs and stages `public/` for GitLab
