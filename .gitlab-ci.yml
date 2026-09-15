@@ -30,7 +30,10 @@ stages:
 test:
   <<: *before_script_template
   stage: test
-  image: mvanvugt/log_tools:master
+  image: "python:${PYTHON_VERSION}-slim"
+  parallel:
+    matrix:
+      - PYTHON_VERSION: ["3.9", "3.11", "3.13"]
   script:
     - bash resources/ci_cd/test.sh
 

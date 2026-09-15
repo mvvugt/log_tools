@@ -7,7 +7,7 @@ name = "log_tools"
 dynamic = ["version"]
 description = "Record per-script run output into one compact, project-wide Markdown log."
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.9,<3.14"
 license = "MIT"
 license-files = ["LICENSE.txt"]
 authors = [
@@ -15,6 +15,8 @@ authors = [
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -53,7 +55,7 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 80
-target-version = "py311"
+target-version = "py39"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]

@@ -49,7 +49,13 @@ pipeline:
 - Both run the same three scripts, in the same order:
   `before_script.sh` (install deps) -> `test.sh` (lint + pytest) ->
   `pages.sh` (build docs, stage `public/`).
-- Both run inside the same Docker image, `mvanvugt/log_tools:master`.
+- Both run inside the same Docker image, `mvanvugt/log_tools:master`,
+  for `pages.sh`. The real CI `test` job additionally runs as a
+  `parallel: matrix:` across Python 3.9/3.11/3.13 using the official
+  `python:*-slim` images (not the custom one), to actually verify the
+  package's `>=3.9` support -- `run_docker.sh`/`build.sh` only
+  reproduce the single-version `mvanvugt/log_tools:master` leg
+  locally, not the full matrix.
 - Both build from committed files only, with a real `.git` present —
   CI clones the repo fresh; locally, `run_docker.sh` does a local
   `git clone` of `REPO_ROOT` into a temp directory instead of

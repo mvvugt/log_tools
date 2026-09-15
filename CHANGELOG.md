@@ -19,3 +19,4 @@
 * API - Add `--failed` flag to `runlog record`, letting a caller mark a run failed (skipping the diff) without going through `runlog run`'s subprocess-exit-code detection.
 * REFACTOR - Move git-toplevel root resolution out of `log_tools/cli/runlog.py` into `log_tools.functions.resolve_git_root()` (raising `RuntimeError` instead of calling `sys.exit`), so both the CLI and `log_tools.setup` share one implementation.
 * DOCS - Update the example pipeline (`resources/examples/pipeline/`) and its README to use self-registering steps instead of `runlog run` wrapping; add a `runlog_setup`/`runlog_setup()` usage section to `docs/source/usage.rst` and an `api/setup.rst` page.
+* BUILD - Lower minimum supported Python from 3.11 to 3.9 (`requires-python`, classifiers, `ruff target-version`, and `resources/conda/` version pins); add a GitLab CI `test` job matrix across Python 3.9/3.11/3.13 (official `python:*-slim` images) to actually verify 3.9 compatibility.
