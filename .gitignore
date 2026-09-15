@@ -4,6 +4,8 @@
 !.gitkeep
 !.gitlab-ci.yml
 !.bumpversion.cfg
+!.setup_git_hooks.py
+!.githooks
 
 # vim files
 *~

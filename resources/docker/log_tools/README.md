@@ -19,9 +19,15 @@ versions instead of drifting against a separate image `requirements.txt`.
 
     ./build.sh
 
-This only builds the image locally — pushing it to wherever
-`.gitlab-ci.yml`/CI pulls `mvanvugt/log_tools:master` from is a
-separate, manual step.
+This only builds the image locally. Push it to Docker Hub so
+`.gitlab-ci.yml`/CI can pull `mvanvugt/log_tools:master` — this is a
+manual step, not scripted or run in CI:
+
+    docker login
+    docker push mvanvugt/log_tools:master
+
+Re-run this push any time the image is rebuilt after a `Dockerfile`
+change (see "Checking staleness" below for detecting that).
 
 `build.sh` also labels the image with a sha256 hash of this
 `Dockerfile`, so later runs can tell whether the image is stale (i.e.

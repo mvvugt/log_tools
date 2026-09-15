@@ -1,0 +1,114 @@
+#!/bin/bash
+# .githooks/commit-msg
+show_help() {
+    cat << 'EOF'
+Conventional Commits Format Guide
+==================================
+
+Format: type(scope): description [#issue]
+
+Example:
+  feat(baseline-table): add stratified testing with regression models #45
+
+COMMIT TYPES
+============
+
+  feat      New data cleaning function or feature
+  fix       Bug fix
+  docs      Documentation (docstrings, README, guides)
+  refactor  Code restructuring
+  test      Adding or updating tests
+  perf      Performance improvements
+  data      Example datasets or demo updates
+  chore     Maintenance (dependencies, configs)
+
+REQUIREMENTS
+============
+
+  • Type must be from the list above
+  • Scope is optional but must contain NO SPACES (use hyphens)
+  • Description must be at least 10 characters
+  • First line should be less than 72 characters
+  • Issue reference is optional (format: #number)
+
+EXAMPLES
+========
+
+  feat(baseline-table): add stratified testing with regression models
+  fix(stats): correct handling of missing data
+  docs(api): update docstring examples for filter method
+  refactor(core): simplify class architecture
+  perf(reading): optimise reading large data files
+  test(config): add unit tests for package
+  chore(deps): update numpy to latest version
+
+SCOPE NAMING
+============
+
+Use hyphens to separate words in scope:
+  • feat(input-validation): not feat(InputValidation)
+  • fix(data-import): not fix(dataImport)
+
+ISSUE REFERENCES
+================
+
+Optionally reference issues or merge requests:
+  • feat(stats): add statistical test support #42
+  • fix(stats): resolve bug #15
+
+For more information, see the repository guidelines.
+EOF
+}
+
+# Handle help flag
+if [[ "$1" == "--help" ]] || [[ "$1" == "-h" ]]; then
+    show_help
+    exit 0
+fi
+
+# extract the commit message
+commit_msg=$(cat "$1")
+# Skip merge commits, these have different conventions
+if echo "$commit_msg" | grep -q "^Merge branch"; then
+    exit 0
+fi
+# Enforce conventional commits with issue reference
+# Format: type(scope): description #issue
+# Example: feat(plotting): add violin plot with quartile markers
+pattern="^(feat|fix|docs|style|refactor|test|chore|perf|data)(\(.+\))?: .{10,}( #[0-9]+)?$"
+if ! echo "$commit_msg" | grep -qE "$pattern"; then
+    echo "ERROR: Commit message must follow conventional commits format"
+    echo ""
+    echo "Format: type(scope): description"
+    echo ""
+    echo "Types for your work:"
+    echo "  feat:     New data processing function or feature"
+    echo "  fix:      Bug fix"
+    echo "  docs:     Documentation (docstrings, README, guides)"
+    echo "  refactor: Code restructuring"
+    echo "  test:     Adding or updating tests"
+    echo "  perf:     Performance improvements"
+    echo "  data:     Example datasets or demo updates"
+    echo "  chore:    Maintenance (dependencies, configs)"
+    echo ""
+    echo "Requirements:"
+    echo "  • Type must be from the list above"
+    echo "  • Scope is optional but must have NO SPACES (use hyphens)"
+    echo "  • Description must be at least 10 characters"
+    echo ""
+    echo "Examples:"
+    echo "  feat(processing): add data processing function"
+    echo "  fix(stats): correct percentile calculation #12"
+    echo "  docs(api): update docstring examples for scatter"
+    echo "  refactor(core): simplify colour palette handling"
+    echo "  perf(rendering): optimise large dataset display"
+    echo ""
+    exit 1
+fi
+# Check message length (first line should be <72 chars)
+first_line=$(echo "$commit_msg" | head -n1)
+if [ ${#first_line} -gt 72 ]; then
+    echo "WARNING: First line is ${#first_line} chars (recommend <72)"
+fi
+exit 0
+

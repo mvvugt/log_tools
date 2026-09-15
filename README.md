@@ -5,7 +5,7 @@ __version__: `0.1.0`
 A small, stdlib-only package for logging/pipeline-tracking tools.
 Currently contains **`runlog`**, which records every pipeline script's
 run into **one compact, project-wide Markdown log** (`RUN_LOG.md` by
-default) — instead of scrolling back through terminal output, or one
+default), instead of scrolling back through terminal output, or one
 log file per script piling up over time.
 
 There is [online](https://mvvugt.gitlab.io/log_tools/index.html)
@@ -15,37 +15,28 @@ documentation for log_tools.
 ## Installation instructions
 At present, `log_tools` is undergoing development and no packages exist yet on
 PyPi. Therefore it is recommended that you install in either of the two ways
-below. Please keep in mind that all development is carried out on MacOS and
-Python v3.13.
+below. Please keep in mind that development is primarily carried out on macOS
+with Python v3.13, and testing is additionally carried out on Linux (HPC
+clusters, and the CI pipeline's Docker container) across Python 3.11-3.13.
 
-### Using pip
-
-You can install using pip from the root of the cloned repository, first clone
-and cd into the repository root:
-
+To install `log_tools`, please use the git repo:
 ```
 git clone git@gitlab.com:mvvugt/log_tools.git
 cd log_tools
 ```
+
+### Dependency installation
+
+#### Using pip
+You can install the dependencies using pip from the root of the cloned
+repository.
 
 Install the dependencies:
 ```
 python -m pip install --upgrade -r requirements.txt
 ```
 
-Then install using pip
-```
-python -m pip install .
-```
-
-Or for an editable (developer) install run the command below from the root of
-the repository. The difference with this is that you can just to a `git pull`
-to update, or switch branches without re-installing:
-```
-python -m pip install -e .
-```
-
-### Using Conda
+#### Using Conda
 There are also conda yaml environment files in `./resources/conda` that
 have the same contents as `requirements.txt` but for conda packages, so all the
 pre-requisites.
@@ -56,26 +47,73 @@ A new conda environment can be built using the command:
 conda env create --file ./resources/conda/conda_create.yaml
 ```
 
-
 To add to an existing environment use:
 ```
 conda env update --file ./resources/conda/conda_update.yaml
 ```
 
+### Package installation
 Next the package can be installed:
 ```
 make install
 ```
 
+`make` is just a wrapper, you can also use:
+```
+python -m pip install .
+```
+
+For an editable (developer) install, see [Development](#development) below.
+
 ### Verify installation
 ```
-python -m log_tools --version
+log_tools --version
 ```
 
 
-#### Development
+## Run the tests
+After installation you will be able to run the tests. If you have cloned the
+repository you can run the command below from the root of the repository:
+```
+pytest ./tests
+```
+
+
+## Quick start example
+
+**`runlog`** records every pipeline script's run into
+**one compact, project-wide Markdown log** (`RUN_LOG.md` by default).
+Two subcommands: `run` wraps a command, streaming its output through
+live while capturing and recording it; `record` is the primitive
+underneath `run`, for when the output text is already in hand.
+
+A full runnable example pipeline lives at
+`resources/examples/pipeline/` (a bash "fetch" step and a python
+"process" step, both wrapped with `runlog run`, plus a `runlog record`
+step). Run it directly:
+
+```bash
+./resources/examples/pipeline/run_pipeline.sh
+```
+
+Wrap a command (as wired into `resources/examples/pipeline/steps/fetch_data.sh`):
+
+```bash
+runlog run --id fetch_data --order 10 --root "$ROOT" -- \
+    "$ROOT"/resources/examples/pipeline/steps/fetch_data.sh "$WORK_DIR"
+```
+
+Record already-known output directly (e.g. a step whose real output
+only exists later, asynchronously, such as a SLURM job recording from
+inside its own batch script once it finishes):
+
+```bash
+runlog record --id my_step --order 50 --root "$ROOT" --text "$(cat some_summary.txt)"
+```
+
+## Development
 For development work, install the package in editable mode with Git commit
-hooks configured:
+hooks configured.
 
 ```bash
 make install-dev
@@ -127,57 +165,13 @@ commit-format-help() {
 ```
 
 If you have already installed the package in editable mode without running
-`_setup_git_hooks.py`, you can configure the hooks manually at any time by
+`.setup_git_hooks.py`, you can configure the hooks manually at any time by
 running:
 
 ```bash
-_setup_git_hooks.py
+python .setup_git_hooks.py
 ```
 
-
-## Run the tests
-After installation you will be able to run the tests. If you have cloned the
-repository you can run the command below from the root of the repository:
-```
-pytest ./tests
-```
-
-
-### Get help
-
-To get help, type `runlog -h` (or `runlog run -h` / `runlog record -h`
-for a subcommand's own options).
-
-
-### Quick start example
-
-Two subcommands: `run` wraps a command, streaming its output through
-live while capturing and recording it; `record` is the primitive
-underneath `run`, for when the output text is already in hand.
-
-A full runnable example pipeline lives at
-`resources/examples/pipeline/` (a bash "fetch" step and a python
-"process" step, both wrapped with `runlog run`, plus a `runlog record`
-step). Run it directly:
-
-```bash
-./resources/examples/pipeline/run_pipeline.sh
-```
-
-Wrap a command (as wired into `resources/examples/pipeline/steps/fetch_data.sh`):
-
-```bash
-runlog run --id fetch_data --order 10 --root "$ROOT" -- \
-    "$ROOT"/resources/examples/pipeline/steps/fetch_data.sh "$WORK_DIR"
-```
-
-Record already-known output directly (e.g. a step whose real output
-only exists later, asynchronously, such as a SLURM job recording from
-inside its own batch script once it finishes):
-
-```bash
-runlog record --id my_step --order 50 --root "$ROOT" --text "$(cat some_summary.txt)"
-```
 
 ### Change log
 

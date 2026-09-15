@@ -32,6 +32,7 @@ Repository = "https://gitlab.com/mvvugt/log_tools"
 [project.scripts]
 runlog = "log_tools.cli.runlog:main"
 runlog-emitter-path = "log_tools.cli.emitter_path:main"
+log_tools = "log_tools.__main__:main"
 
 [tool.setuptools]
 include-package-data = true
