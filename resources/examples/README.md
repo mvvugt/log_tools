@@ -5,12 +5,14 @@ This directory holds runnable examples for `log_tools`.
 ## `pipeline/`
 
 A small, self-contained example pipeline demonstrating real `runlog`
-usage end to end: a bash "fetch" step and a python "process" step, both
-wrapped with `runlog run` (recording through the `log_tools` emitter),
-plus a `runlog record` step for output that's already in hand.
+usage end to end: a bash "fetch" step and a python "process" step, each
+self-registering its own `RUN_LOG.md` entry via `runlog_setup`/
+`runlog_setup()` (id/order derived automatically from the step itself,
+recording through the `log_tools` emitter), plus a plain `runlog
+record` step for output that's already in hand.
 
-To run it (after `pip install -e .` from the repo root, so `runlog` and
-`runlog-emitter-path` are on `PATH`):
+To run it (after `pip install -e .` from the repo root, so `runlog`,
+`runlog-setup-path`, and `runlog-emitter-path` are on `PATH`):
 
 ```bash
 ./resources/examples/pipeline/run_pipeline.sh

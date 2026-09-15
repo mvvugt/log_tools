@@ -89,29 +89,37 @@ pytest ./tests
 
 **`runlog`** records every pipeline script's run into
 **one compact, project-wide Markdown log** (`RUN_LOG.md` by default).
-Two subcommands: `run` wraps a command, streaming its output through
-live while capturing and recording it; `record` is the primitive
-underneath `run`, for when the output text is already in hand.
-`runlog run` sets the `RUNLOG_RECORD_FILE` environment variable for
-the wrapped command; the emitter checks it and, when set, appends its
-`log_info`/`log_warn`/`log_error`/`log_debug` calls to that file too
-— that's how emitter output from separate pipeline scripts ends up
-combined in one `RUN_LOG.md`.
+There are two ways to record a step:
+
+- **Self-registering** (`runlog_setup()`/`runlog_setup`): call it at a
+  step script's own top and its id/order are derived automatically
+  (from the script's own filename, and a counter scoped to the current
+  pipeline run) -- no orchestrator wrapping needed.
+- **`runlog` CLI**: `run` wraps a command externally, streaming its
+  output live while capturing and recording it; `record` is the
+  primitive underneath both `run` and `runlog_setup`, for when the
+  output text is already in hand (or the id/order should be explicit).
+
+Either way, the emitter's `log_info`/`log_warn`/`log_error`/`log_debug`
+calls are what gets recorded — that's how emitter output from separate
+pipeline scripts ends up combined in one `RUN_LOG.md`.
 
 A full runnable example pipeline lives at
 `resources/examples/pipeline/` (a bash "fetch" step and a python
-"process" step, both wrapped with `runlog run`, plus a `runlog record`
-step). Run it directly:
+"process" step, each self-registering via `runlog_setup`/
+`runlog_setup()`, plus a `runlog record` step). Run it directly:
 
 ```bash
 ./resources/examples/pipeline/run_pipeline.sh
 ```
 
-Wrap a command (as wired into `resources/examples/pipeline/steps/fetch_data.sh`):
+Self-register a step (as wired into
+`resources/examples/pipeline/steps/fetch_data.sh`):
 
 ```bash
-runlog run --id fetch_data --order 10 --root "$ROOT" -- \
-    "$ROOT"/resources/examples/pipeline/steps/fetch_data.sh "$WORK_DIR"
+source "$(runlog-setup-path)"
+runlog_setup
+log_info "fetching data"
 ```
 
 Record already-known output directly (e.g. a step whose real output

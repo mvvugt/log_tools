@@ -94,6 +94,54 @@ Shared Options
      - Output text to record (mutually exclusive with ``--stdin``).
    * - ``--stdin``
      - Read output text to record from stdin.
+   * - ``--failed``
+     - Mark this run as failed (skips the diff vs the previous run,
+       same as ``run`` does on a non-zero exit). Off by default.
+
+Self-Registering (``runlog_setup``)
+------------------------------------
+
+An alternative to wrapping a step externally with ``runlog run``: call
+``runlog_setup()``/``runlog_setup`` at the step script's own top, and it
+registers itself -- no orchestrator ``--id``/``--order`` wrapping needed.
+
+- **``script_id``** is derived from the script's own filename (Python:
+  ``Path(sys.argv[0]).stem``; Bash: the calling script's basename).
+- **``order``** is derived from a counter scoped to the current
+  pipeline run, identified by the calling script's parent PID -- sibling
+  steps invoked directly by one orchestrator process share a PPID for
+  the run's duration, so no orchestrator changes are needed in the
+  common case. Re-registering the same ``script_id`` within the same
+  run reuses its existing order.
+- **Raw output capture** works the same as ``run``'s
+  ``--raw-on-failure`` safety net, but is on by default here (there is
+  no flag to opt in for an in-process crash): the script's own
+  stdout/stderr are captured so an unhandled exception still leaves the
+  full raw output behind.
+- **Log file/root location** come from ``RUNLOG_LOG_FILE``/
+  ``RUNLOG_ROOT`` environment variables, optionally exported once by an
+  orchestrator, falling back to the same git-toplevel/``RUN_LOG.md``
+  defaults used elsewhere.
+
+Python:
+
+.. code-block:: python
+
+   from log_tools.setup import runlog_setup
+   from log_tools.emitter import log_info
+
+   with runlog_setup():
+       log_info("doing work")
+
+Bash (after ``pip install log_tools``, so ``runlog-setup-path`` is on
+``PATH``; sources ``emitter.sh`` internally, so ``log_info`` etc. are
+available too):
+
+.. code-block:: bash
+
+   source "$(runlog-setup-path)"
+   runlog_setup
+   log_info "doing work"
 
 Producing Recorded Output
 --------------------------
@@ -125,9 +173,10 @@ Example Pipeline
 -----------------
 
 This is a **combined** example. ``resources/examples/pipeline/``
-contains a small, runnable example pipeline exercising ``runlog run``
-(a bash step and a python step, both using the emitter above) and
-``runlog record`` together. Run it with:
+contains a small, runnable example pipeline exercising
+``runlog_setup``/``runlog_setup()`` (a bash step and a python step,
+both self-registering and using the emitter above) and ``runlog
+record`` together. Run it with:
 
 .. code-block:: bash
 

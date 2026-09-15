@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Toy "fetch" step for the runlog example pipeline (see
 # resources/examples/pipeline/run_pipeline.sh). Writes a small dummy
-# TSV of per-sample counts into the work dir passed as $1, logging
-# through the runlog emitter so runlog run records it.
+# TSV of per-sample counts into the work dir passed as $1, self-
+# registering its own RUN_LOG.md entry via runlog_setup (id/order
+# derived automatically; location via RUNLOG_LOG_FILE/RUNLOG_ROOT, set
+# once by run_pipeline.sh).
 set -euo pipefail
 
-# shellcheck disable=SC1090  # dynamic path, resolved via runlog-emitter-path
-source "$(runlog-emitter-path)"
+# shellcheck disable=SC1090  # dynamic path, resolved via runlog-setup-path
+source "$(runlog-setup-path)"
+runlog_setup
 
 work_dir="${1:?Error: work_dir required}"
 out_file="${work_dir}/raw_counts.tsv"

@@ -3,7 +3,9 @@
 
 See ``resources/examples/pipeline/run_pipeline.sh``. Reads the TSV
 written by ``steps/fetch_data.sh`` and logs a summary through
-``log_tools.emitter``, so ``runlog run`` records it.
+``log_tools.emitter``, self-registering its own RUN_LOG.md entry via
+``runlog_setup`` (id/order derived automatically; location via
+``RUNLOG_LOG_FILE``/``RUNLOG_ROOT``, set once by ``run_pipeline.sh``).
 """
 from __future__ import annotations
 
@@ -11,6 +13,7 @@ import csv
 import sys
 
 from log_tools.emitter import log_error, log_info
+from log_tools.setup import runlog_setup
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -33,13 +36,14 @@ def main(argv: list[str]) -> int:
         log_error("usage: process_data.py WORK_DIR")
         return 1
 
-    in_path = f"{argv[0]}/raw_counts.tsv"
-    log_info(f"Reading {in_path}")
-    with open(in_path, newline="") as fh:
-        rows = list(csv.DictReader(fh, delimiter="\t"))
+    with runlog_setup():
+        in_path = f"{argv[0]}/raw_counts.tsv"
+        log_info(f"Reading {in_path}")
+        with open(in_path, newline="") as fh:
+            rows = list(csv.DictReader(fh, delimiter="\t"))
 
-    total = sum(int(row["count"]) for row in rows)
-    log_info(f"Processed {len(rows)} samples, total count = {total}")
+        total = sum(int(row["count"]) for row in rows)
+        log_info(f"Processed {len(rows)} samples, total count = {total}")
     return 0
 
 
