@@ -1,0 +1,3 @@
+# log_tools has zero runtime dependencies (stdlib-only, see CLAUDE.md and
+# pyproject.toml's `dependencies = []`). This file exists only so the
+# documented install step has something to point at.

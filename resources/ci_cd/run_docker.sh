@@ -20,8 +20,17 @@ if ! "${REPO_ROOT}/resources/docker/log_tools/check_stale.sh"; then
     echo "[warn] continuing anyway with the existing image" >&2
 fi
 
-TMP_CHECKOUT="$(mktemp -d)"
+# Placed inside REPO_ROOT (already under $HOME), not the system temp
+# dir (/var/folders/... on macOS): Docker Desktop and Colima both only
+# bind-mount paths under directories they're configured to share --
+# $HOME by default -- so a system-tmp checkout can silently bind-mount
+# as empty instead of erroring. `.*` is already gitignored, so this
+# never risks being committed even if the trap below doesn't run.
+TMP_CHECKOUT="$(mktemp -d "${REPO_ROOT}/.ci_debug_tmp.XXXXXX")"
 trap 'rm -rf "${TMP_CHECKOUT}"' EXIT
+# Resolve symlinks defensively, in case REPO_ROOT itself is reached via
+# one -- Docker's file-sharing check matches on the resolved path.
+TMP_CHECKOUT="$(cd "${TMP_CHECKOUT}" && pwd -P)"
 
 git -C "${REPO_ROOT}" archive HEAD | tar -x -C "${TMP_CHECKOUT}"
 

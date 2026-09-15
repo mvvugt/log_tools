@@ -21,7 +21,9 @@
 *.out
 *.log
 *.errors
-*.txt
+./**/*.txt
+!**/LICENSE.txt
+!resources/ci_cd/sphinx.txt
 *.fam
 *.ppt*
 job/
