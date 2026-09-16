@@ -13,6 +13,7 @@ from log_tools.runlog import (
     record,
     render_log,
     run_and_record,
+    split_stages,
 )
 
 from .conftest import commit_hash
@@ -46,6 +47,68 @@ def test_diff_text_truncates_long_diffs() -> None:
     lines = diff.splitlines()
     assert len(lines) == Constants.MAX_DIFF_LINES + 1
     assert lines[-1].endswith("more line(s) omitted")
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# split_stages
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def _stage_marker(name: str) -> str:
+    """Build a `[stage]` marker line for `name`, matching the emitter's
+    real format (a fixed-width timestamp, irrelevant to `split_stages`).
+    """
+    return f"[stage] 2026-01-01 00:00:00 {name}"
+
+
+def test_split_stages_no_markers_is_single_default_stage() -> None:
+    """Output with no `[stage]` markers is one `DEFAULT_STAGE_KEY` entry."""
+    output = "line1\nline2"
+
+    assert split_stages(output) == {Constants.DEFAULT_STAGE_KEY: output}
+
+
+def test_split_stages_splits_on_markers() -> None:
+    """Each marker starts a new named stage; content before the first
+    marker is kept under `DEFAULT_STAGE_KEY`."""
+    output = "\n".join([
+            "preamble",
+            _stage_marker("prepare"),
+            "prep line 1",
+            "prep line 2",
+            _stage_marker("submit"),
+            "submit line",
+            ])
+
+    stages = split_stages(output)
+
+    assert stages == {
+            Constants.DEFAULT_STAGE_KEY: "preamble",
+            "prepare": "prep line 1\nprep line 2",
+            "submit": "submit line",
+            }
+
+
+def test_split_stages_repeated_marker_concatenates() -> None:
+    """A stage name reused later in the output appends, not overwrites."""
+    output = "\n".join([
+            _stage_marker("loop"),
+            "first",
+            _stage_marker("loop"),
+            "second",
+            ])
+
+    assert split_stages(output) == {"loop": "first\nsecond"}
+
+
+def test_split_stages_empty_stage_is_omitted() -> None:
+    """A marker immediately followed by another (no content) is dropped."""
+    output = "\n".join([_stage_marker("empty"), _stage_marker("full"), "x"])
+
+    assert split_stages(output) == {"full": "x"}
+
+
+def test_split_stages_empty_output() -> None:
+    """Empty output splits into no stages at all."""
+    assert split_stages("") == {}
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -450,6 +513,111 @@ def test_record_resolved_error_notes_and_strips_tail(git_repo: Path) -> None:
     # old_for_diff ("[info] a") == new output, so no +/- diff lines needed.
     assert "```diff" not in text
     assert "- status: failed" not in text.split("Output:")[-1]
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# record -- stage-aware diffing
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_record_new_stage_is_not_diffed(git_repo: Path) -> None:
+    """A stage that only appears in this run isn't mentioned in the diff,
+    even though its content is new -- diffing against nothing isn't
+    meaningful."""
+    log_file = git_repo / "RUN_LOG.md"
+    record(
+            log_file=log_file, script_id="s1", order=0,
+            output=f"{_stage_marker('prepare')}\nprep v1", root=git_repo,
+            )
+
+    record(
+            log_file=log_file, script_id="s1", order=0,
+            output=(
+                    f"{_stage_marker('prepare')}\nprep v1\n"
+                    f"{_stage_marker('submit')}\nsubmit v1"
+                    ),
+            root=git_repo,
+            )
+
+    text = log_file.read_text()
+    assert "Δ vs previous run" not in text
+    assert "submit v1" in text
+
+
+def test_record_unchanged_stage_is_not_diffed(git_repo: Path) -> None:
+    """A stage whose content is identical across runs produces no diff for
+    that stage, even while a sibling stage changed."""
+    log_file = git_repo / "RUN_LOG.md"
+    record(
+            log_file=log_file, script_id="s1", order=0,
+            output=(
+                    f"{_stage_marker('prepare')}\nprep v1\n"
+                    f"{_stage_marker('submit')}\nsubmit v1"
+                    ),
+            root=git_repo,
+            )
+
+    record(
+            log_file=log_file, script_id="s1", order=0,
+            output=(
+                    f"{_stage_marker('prepare')}\nprep v1\n"
+                    f"{_stage_marker('submit')}\nsubmit v2"
+                    ),
+            root=git_repo,
+            )
+
+    text = log_file.read_text()
+    diff_section = text.split("Output:")[0]
+    assert "stage `submit`" in diff_section
+    assert "-submit v1" in diff_section
+    assert "+submit v2" in diff_section
+    assert "stage `prepare`" not in diff_section
+
+
+def test_record_dropped_stage_gets_note(git_repo: Path) -> None:
+    """A stage present previously but absent this run gets a one-line
+    'not present this run' note instead of a diff."""
+    log_file = git_repo / "RUN_LOG.md"
+    record(
+            log_file=log_file, script_id="s1", order=0,
+            output=(
+                    f"{_stage_marker('prepare')}\nprep v1\n"
+                    f"{_stage_marker('submit')}\nsubmit v1"
+                    ),
+            root=git_repo,
+            )
+
+    record(
+            log_file=log_file, script_id="s1", order=0,
+            output=f"{_stage_marker('prepare')}\nprep v1",
+            root=git_repo,
+            )
+
+    text = log_file.read_text()
+    diff_section = text.split("Output:")[0]
+    assert "stage `submit`: not present this run" in diff_section
+
+
+def test_record_no_stage_markers_diffs_whole_output_unlabeled(
+        git_repo: Path,
+        ) -> None:
+    """A script never using `log_stage` keeps today's exact rendering: a
+    single unlabeled diff block over the whole output."""
+    log_file = git_repo / "RUN_LOG.md"
+    record(
+            log_file=log_file, script_id="s1", order=0, output="old text",
+            root=git_repo,
+            )
+
+    record(
+            log_file=log_file, script_id="s1", order=0, output="new text",
+            root=git_repo,
+            )
+
+    text = log_file.read_text()
+    diff_section = text.split("Output:")[0]
+    assert "```diff" in diff_section
+    assert "stage `" not in diff_section
+    assert "-old text" in diff_section
+    assert "+new text" in diff_section
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

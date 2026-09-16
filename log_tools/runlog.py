@@ -15,6 +15,13 @@ Recorded output is produced primarily by scripts calling into
 process via ``Constants.RECORD_FILE_ENV_VAR`` -- see `run_and_record`.
 An optional user-supplied ``include_pattern`` regex can additionally
 pull matching raw lines into the recorded output.
+
+A script whose output naturally splits into independent sections (e.g.
+one execution that prepares several unrelated job types) can call
+``log_stage(name)`` between them; `record` then diffs each stage
+separately (see `split_stages`) instead of diffing the whole output as
+one blob, so a stage that ran for the first time or is unchanged never
+buries a diff in a stage that actually changed.
 """
 from __future__ import annotations
 
@@ -44,6 +51,13 @@ class Constants:
     TAG_PATTERN: str = r"^\[[A-Za-z]+\]"  # emitter's documented format
     ERROR_TAIL_DIVIDER: str = "--- error output (raw) ---"
     RECORD_FILE_ENV_VAR: str = "RUNLOG_RECORD_FILE"
+    STAGE_MARKER_PATTERN: str = (
+            r"^\[stage\] \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} (.+)$"
+            )
+    """Matches a `log_stage` marker line; group 1 is the stage name."""
+    DEFAULT_STAGE_KEY: str = ""
+    """`split_stages` key for content before the first marker, or the
+    whole output when there are no markers at all."""
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -81,10 +95,11 @@ class Entry:
     """The captured output text for this run."""
 
     diff: str | None = None
-    """Unified diff vs the previous run's output, shown as a sibling
-    block above `output` when not `None`. Computed fresh at record
-    time -- never re-derived from a parsed file, so it is never nested
-    inside the ``Output:`` code fence."""
+    """Per-stage diff(s) vs the previous run's output (see
+    `split_stages`/`_stage_diff_blocks`), shown as a sibling block above
+    `output` when not `None`. Computed fresh at record time -- never
+    re-derived from a parsed file, so it is never nested inside the
+    ``Output:`` code fence."""
 
     failed: bool = False
     """Whether this run's underlying command failed. Only ever set
@@ -204,6 +219,86 @@ def diff_text(old: str, new: str) -> str | None:
         diff_lines = diff_lines[:Constants.MAX_DIFF_LINES]
         diff_lines.append(f"... {omitted} more line(s) omitted")
     return "\n".join(diff_lines)
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def split_stages(output: str) -> dict[str, str]:
+    """Split `output` into named stages via `log_stage`'s marker lines.
+
+    Parameters
+    ----------
+    output : `str`
+        Recorded output text, optionally containing
+        ``[stage] <timestamp> <name>`` marker lines emitted by
+        `log_tools.emitter.log_stage` / ``log_tools/emitter.sh``'s
+        ``log_stage``.
+
+    Returns
+    -------
+    stages : `dict[str, str]`
+        Mapping of stage name to its content (the lines emitted after
+        that marker, up to the next one), in first-seen order. Content
+        before the first marker -- or the entire output, when there are
+        no markers -- is keyed by `Constants.DEFAULT_STAGE_KEY`. A
+        repeated marker for the same name concatenates onto that name's
+        existing content rather than overwriting it. Stages with no
+        content are omitted.
+    """
+    pattern = re.compile(Constants.STAGE_MARKER_PATTERN)
+    stages: dict[str, list[str]] = {}
+    current = Constants.DEFAULT_STAGE_KEY
+    for line in output.splitlines():
+        match = pattern.match(line)
+        if match:
+            current = match.group(1)
+            continue
+        stages.setdefault(current, []).append(line)
+    return {name: "\n".join(lines) for name, lines in stages.items() if lines}
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def _stage_diff_blocks(
+        old_stages: dict[str, str], new_stages: dict[str, str],
+        ) -> list[str]:
+    """Build per-stage diff blocks/notes for a stage-aware `record()` diff.
+
+    Parameters
+    ----------
+    old_stages : `dict[str, str]`
+        Previous run's output, split via `split_stages`.
+    new_stages : `dict[str, str]`
+        New run's output, split via `split_stages`.
+
+    Returns
+    -------
+    blocks : `list[str]`
+        One entry per stage that has something to report, in
+        `new_stages`' order followed by dropped stages in `old_stages`'
+        order. A stage in `new_stages` absent from `old_stages` (it ran
+        for the first time) is skipped entirely -- diffing against
+        nothing is not a meaningful diff. A stage in `old_stages` absent
+        from `new_stages` gets a one-line "not present this run" note
+        instead of a diff. `Constants.DEFAULT_STAGE_KEY` (no explicit
+        `log_stage` calls used) renders its diff unlabeled, identical to
+        `record()`'s pre-stage-splitting output.
+    """
+    blocks: list[str] = []
+    for name, new_content in new_stages.items():
+        if name not in old_stages:
+            continue
+        diff = diff_text(old_stages[name], new_content)
+        if diff is None:
+            continue
+        if name == Constants.DEFAULT_STAGE_KEY:
+            blocks.append(f"```diff\n{diff}\n```")
+        else:
+            blocks.append(f"stage `{name}`:\n```diff\n{diff}\n```")
+
+    for name in old_stages:
+        if name not in new_stages:
+            blocks.append(f"- stage `{name}`: not present this run")
+
+    return blocks
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -357,6 +452,13 @@ def record(
     and a "- error resolved" note is shown instead of a raw diff of its
     removal.
 
+    The diff is computed per stage (see `split_stages`), not over the
+    whole output blob: a stage named via `log_stage` that ran for the
+    first time is never diffed against nothing, and a stage unchanged
+    across runs never buries a stage that genuinely changed inside one
+    large diff. Output that never calls `log_stage` behaves exactly as
+    before -- it is one implicit stage, diffed as a whole.
+
     `Entry.first_run` is set once, on the first `record()` call for a
     given `script_id`, and preserved unchanged on every subsequent call
     -- including after a failed run.
@@ -365,7 +467,7 @@ def record(
     commit, dirty = get_git_info(root)
     previous = entries.get(script_id)
 
-    diff = None
+    diff_parts: list[str] = []
     resolved_note = False
     if not failed and previous is not None:
         old_for_diff = previous.output
@@ -376,16 +478,21 @@ def record(
                     )
             old_for_diff = old_for_diff.rstrip("\n")
 
-        diff = diff_text(old_for_diff, output)
-        if diff is not None:
-            _log.info("changes vs previous run of %r:\n%s", script_id, diff)
+        diff_parts = _stage_diff_blocks(
+                split_stages(old_for_diff), split_stages(output),
+                )
+        if diff_parts:
+            _log.info(
+                    "changes vs previous run of %r:\n%s", script_id,
+                    "\n".join(diff_parts),
+                    )
         elif resolved_note:
             _log.info("error resolved vs previous run of %r", script_id)
         else:
             _log.info("no change vs previous run of %r", script_id)
 
     diff_block = None
-    if (diff is not None or resolved_note) and previous is not None:
+    if (diff_parts or resolved_note) and previous is not None:
         prev_dirty_note = " (dirty)" if previous.dirty else ""
         parts = [
                 f"Δ vs previous run (was `{previous.commit}`"
@@ -393,8 +500,7 @@ def record(
                 ]
         if resolved_note:
             parts.append("- error resolved")
-        if diff is not None:
-            parts.append(f"```diff\n{diff}\n```")
+        parts.extend(diff_parts)
         diff_block = "\n".join(parts)
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

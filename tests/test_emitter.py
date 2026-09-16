@@ -67,6 +67,18 @@ def test_log_debug_prints_to_stdout(capsys: pytest.CaptureFixture[str]) -> None:
     assert out.startswith("[debug")
 
 
+def test_log_stage_prints_to_stdout_with_tag_pattern(
+        capsys: pytest.CaptureFixture[str],
+        ) -> None:
+    """`log_stage` prints to stdout, matching `Constants.TAG_PATTERN`."""
+    log_stage("prepare")
+
+    out = capsys.readouterr().out.strip()
+    assert re.match(Constants.TAG_PATTERN, out)
+    assert re.match(Constants.STAGE_MARKER_PATTERN, out)
+    assert out.startswith("[stage]")
+
+
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 def test_log_info_records_by_default(record_file: Path) -> None:
     """`log_info` appends to the record file unless told not to."""
