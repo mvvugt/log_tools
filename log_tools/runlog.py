@@ -60,6 +60,12 @@ class Entry:
     timestamp: str
     """Local timestamp of the run, ``YYYY-MM-DD HH:MM:SS``."""
 
+    first_run: str
+    """Local timestamp of this script id's first-ever recorded run,
+    ``YYYY-MM-DD HH:MM:SS``. Set once and never changed on reruns; see
+    `record`. Falls back to `timestamp` when parsed from a log written
+    before this field existed (see `parse_log`)."""
+
     commit: str
     """Short git commit hash active at run time (``"unknown"`` if not
     a git repo or git is unavailable)."""
@@ -120,12 +126,15 @@ def parse_log(path: Path) -> dict[str, Entry]:
         i += 1
 
         timestamp = ""
+        first_run = ""
         commit = "unknown"
         dirty = False
         failed = False
         while i < len(lines) and lines[i].startswith("- "):
             meta = lines[i][2:]
-            if meta.startswith("last run: "):
+            if meta.startswith("first run: "):
+                first_run = meta[len("first run: "):]
+            elif meta.startswith("last run: "):
                 timestamp = meta[len("last run: "):]
             elif meta.startswith("commit: "):
                 commit = meta[len("commit: `"):].split("`")[0]
@@ -133,6 +142,11 @@ def parse_log(path: Path) -> dict[str, Entry]:
             elif meta.startswith("status: "):
                 failed = meta[len("status: "):].strip() == "failed"
             i += 1
+
+        # logs written before this field existed have no `- first run:`
+        # line -- fall back to this section's last-run timestamp.
+        if not first_run:
+            first_run = timestamp
 
         # skip any diff block, then read the current "Output:" fenced block
         output_lines: list[str] = []
@@ -154,8 +168,8 @@ def parse_log(path: Path) -> dict[str, Entry]:
 
         entries[script_id] = Entry(
                 script_id=script_id, order=order, timestamp=timestamp,
-                commit=commit, dirty=dirty, label=label,
-                output="\n".join(output_lines), failed=failed,
+                first_run=first_run, commit=commit, dirty=dirty,
+                label=label, output="\n".join(output_lines), failed=failed,
                 )
 
     return entries
@@ -295,6 +309,7 @@ def render_log(entries: dict[str, Entry]) -> str:
         dirty_note = " (dirty)" if entry.dirty else ""
         block = [
                 f"{Constants.SECTION_HEADER_PREFIX}{title}",
+                f"- first run: {entry.first_run}",
                 f"- last run: {entry.timestamp}",
                 f"- commit: `{entry.commit}`{dirty_note}",
                 ]
@@ -341,6 +356,10 @@ def record(
     `Constants.ERROR_TAIL_DIVIDER`, that tail is stripped before diffing
     and a "- error resolved" note is shown instead of a raw diff of its
     removal.
+
+    `Entry.first_run` is set once, on the first `record()` call for a
+    given `script_id`, and preserved unchanged on every subsequent call
+    -- including after a failed run.
     """
     entries = parse_log(log_file)
     commit, dirty = get_git_info(root)
@@ -378,11 +397,13 @@ def record(
             parts.append(f"```diff\n{diff}\n```")
         diff_block = "\n".join(parts)
 
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    first_run = previous.first_run if previous is not None else now
+
     entries[script_id] = Entry(
-            script_id=script_id, order=order,
-            timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            commit=commit, dirty=dirty, label=label, output=output,
-            diff=diff_block, failed=failed,
+            script_id=script_id, order=order, timestamp=now,
+            first_run=first_run, commit=commit, dirty=dirty, label=label,
+            output=output, diff=diff_block, failed=failed,
             )
 
     atomic_write(log_file, render_log(entries))

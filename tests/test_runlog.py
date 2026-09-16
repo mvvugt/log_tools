@@ -170,15 +170,18 @@ def test_render_log_orders_by_order_then_id() -> None:
     entries = {
             "b_script": Entry(
                     script_id="b_script", order=1, timestamp="t",
-                    commit="abc", dirty=False, label="", output="out-b",
+                    first_run="t", commit="abc", dirty=False, label="",
+                    output="out-b",
                     ),
             "a_script": Entry(
                     script_id="a_script", order=1, timestamp="t",
-                    commit="abc", dirty=False, label="", output="out-a",
+                    first_run="t", commit="abc", dirty=False, label="",
+                    output="out-a",
                     ),
             "zeroth": Entry(
                     script_id="zeroth", order=0, timestamp="t",
-                    commit="abc", dirty=False, label="", output="out-z",
+                    first_run="t", commit="abc", dirty=False, label="",
+                    output="out-z",
                     ),
             }
 
@@ -193,7 +196,8 @@ def test_render_log_includes_label_and_dirty_note() -> None:
     entries = {
             "s": Entry(
                     script_id="s", order=0, timestamp="2026-01-01 00:00:00",
-                    commit="abc123", dirty=True, label="./run.sh", output="ok",
+                    first_run="2025-12-31 00:00:00", commit="abc123",
+                    dirty=True, label="./run.sh", output="ok",
                     ),
             }
 
@@ -201,17 +205,19 @@ def test_render_log_includes_label_and_dirty_note() -> None:
 
     assert "[0] s (`./run.sh`)" in rendered
     assert "commit: `abc123` (dirty)" in rendered
+    assert "- first run: 2025-12-31 00:00:00" in rendered
+    assert rendered.index("- first run:") < rendered.index("- last run:")
 
 
 def test_render_log_failed_status_line() -> None:
     """A failed entry gets `- status: failed`; a successful one doesn't."""
     ok_entry = Entry(
-            script_id="ok", order=0, timestamp="t", commit="abc",
-            dirty=False, label="", output="out", failed=False,
+            script_id="ok", order=0, timestamp="t", first_run="t",
+            commit="abc", dirty=False, label="", output="out", failed=False,
             )
     failed_entry = Entry(
-            script_id="bad", order=1, timestamp="t", commit="abc",
-            dirty=False, label="", output="out", failed=True,
+            script_id="bad", order=1, timestamp="t", first_run="t",
+            commit="abc", dirty=False, label="", output="out", failed=True,
             )
 
     rendered = render_log({"ok": ok_entry, "bad": failed_entry})
@@ -235,12 +241,14 @@ def test_parse_log_round_trips_core_fields(tmp_path: Path) -> None:
     entries = {
             "s1": Entry(
                     script_id="s1", order=2, timestamp="2026-01-01 00:00:00",
-                    commit="deadbee", dirty=True, label="my label",
+                    first_run="2025-12-01 00:00:00", commit="deadbee",
+                    dirty=True, label="my label",
                     output="line1\nline2", failed=False,
                     ),
             "s2": Entry(
                     script_id="s2", order=1, timestamp="2026-01-02 00:00:00",
-                    commit="cafef00", dirty=False, label="",
+                    first_run="2025-12-15 00:00:00", commit="cafef00",
+                    dirty=False, label="",
                     output="only line", failed=True,
                     ),
             }
@@ -254,11 +262,37 @@ def test_parse_log_round_trips_core_fields(tmp_path: Path) -> None:
         got = parsed[script_id]
         assert got.order == original.order
         assert got.timestamp == original.timestamp
+        assert got.first_run == original.first_run
         assert got.commit == original.commit
         assert got.dirty == original.dirty
         assert got.label == original.label
         assert got.output == original.output
         assert got.failed == original.failed
+
+
+def test_parse_log_missing_first_run_line_falls_back_to_last_run(
+        tmp_path: Path,
+        ) -> None:
+    """A log written before this field existed has no `- first run:` line;
+    parsing it falls back to that entry's `- last run:` value instead of
+    crashing or leaving `first_run` empty."""
+    log_file = tmp_path / "RUN_LOG.md"
+    log_file.write_text(
+            "## [0] s1\n"
+            "- last run: 2026-01-01 00:00:00\n"
+            "- commit: `abc123`\n"
+            "\n"
+            "Output:\n"
+            "```text\n"
+            "hello\n"
+            "```\n",
+            )
+
+    parsed = parse_log(log_file)
+
+    assert parsed["s1"].first_run == "2026-01-01 00:00:00"
+    assert parsed["s1"].timestamp == "2026-01-01 00:00:00"
+    assert parsed["s1"].output == "hello"
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -278,6 +312,59 @@ def test_record_creates_new_entry(git_repo: Path) -> None:
     assert "hello" in text
     assert commit_hash(git_repo) in text
     assert "Δ vs previous run" not in text
+
+
+def test_record_first_run_set_on_first_record(git_repo: Path) -> None:
+    """On a script id's very first record, `first run` == `last run`."""
+    log_file = git_repo / "RUN_LOG.md"
+
+    record(
+            log_file=log_file, script_id="s1", order=0, output="hello",
+            root=git_repo,
+            )
+
+    parsed = parse_log(log_file)
+    assert parsed["s1"].first_run == parsed["s1"].timestamp
+
+
+def test_record_first_run_persists_across_reruns(git_repo: Path) -> None:
+    """`first run` stays fixed across reruns, even as output changes."""
+    log_file = git_repo / "RUN_LOG.md"
+    record(
+            log_file=log_file, script_id="s1", order=0, output="old text",
+            root=git_repo,
+            )
+    first_run = parse_log(log_file)["s1"].first_run
+
+    record(
+            log_file=log_file, script_id="s1", order=0, output="new text",
+            root=git_repo,
+            )
+
+    assert parse_log(log_file)["s1"].first_run == first_run
+
+
+def test_record_first_run_persists_after_failed_run(git_repo: Path) -> None:
+    """`first run` survives a failed rerun, and a rerun after that."""
+    log_file = git_repo / "RUN_LOG.md"
+    record(
+            log_file=log_file, script_id="s1", order=0, output="ok",
+            root=git_repo,
+            )
+    first_run = parse_log(log_file)["s1"].first_run
+
+    record(
+            log_file=log_file, script_id="s1", order=0, output="boom",
+            root=git_repo, failed=True,
+            )
+    assert parse_log(log_file)["s1"].first_run == first_run
+    assert parse_log(log_file)["s1"].failed is True
+
+    record(
+            log_file=log_file, script_id="s1", order=0, output="ok again",
+            root=git_repo,
+            )
+    assert parse_log(log_file)["s1"].first_run == first_run
 
 
 def test_record_upserts_same_id_no_change(git_repo: Path) -> None:
