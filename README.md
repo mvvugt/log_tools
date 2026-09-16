@@ -173,10 +173,13 @@ high-cardinality loop (e.g. one call per file), `log_count(key)` /
 `log_count_summary(key)` batch it into one recorded summary line
 instead of one row per item.
 
-A full runnable example pipeline lives at
-`resources/examples/pipeline/` (a bash "fetch" step and a python
-"process" step, each self-registering via `runlog_setup`/
-`runlog_setup()`, plus a `runlog record` step). Run it directly:
+A full runnable example pipeline exercising every feature above
+together — self-registering bash/python steps, `runlog run` wrapping an
+external tool, `log_stage`, `log_count`, failure handling, and the
+`RUNLOG_SCRIPT_ID`/`RUNLOG_ORDER` overrides needed for batch-scheduler
+(e.g. SLURM) pipelines — lives at `resources/examples/pipeline/`; see
+`resources/examples/README.md` for a step-by-step breakdown. Run it
+directly:
 
 ```bash
 ./resources/examples/pipeline/run_pipeline.sh
@@ -197,6 +200,17 @@ inside its own batch script once it finishes):
 
 ```bash
 runlog record --id my_step --order 50 --root "$ROOT" --text "$(cat some_summary.txt)"
+```
+
+Wrap a third-party CLI you can't add emitter calls to, from the
+outside (`runlog run` doesn't read `RUNLOG_ROOT`/`RUNLOG_LOG_FILE`, so
+`--root`/`--log-file` are always explicit here; `-i/--include-pattern`
+keeps only lines matching a regex, e.g. a tool's own summary lines, out
+of an otherwise noisy raw output):
+
+```bash
+runlog run --id third_party_tool --order 40 --root "$ROOT" \
+    --log-file "$ROOT/RUN_LOG.md" -i '^RESULT:' -- some-external-cli --flag value
 ```
 
 ## Development

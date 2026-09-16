@@ -94,6 +94,30 @@ Shared Options
        safety net, in case a crash never went through the emitter (e.g.
        an unhandled traceback). Off by default.
 
+``run`` Worked Example
+------------------------
+
+``run`` is for a step that isn't a `log_tools`-aware script -- a
+third-party CLI you can't add ``runlog_setup``/emitter calls to. Wrap it
+from the outside instead. Unlike ``runlog_setup``, ``run`` does not read
+``RUNLOG_ROOT``/``RUNLOG_LOG_FILE``, so ``--root``/``--log-file`` are
+passed explicitly (matching ``ex_src/rv_gen.sh``'s pattern of wrapping
+external tools such as ``clinvar-filter``/``marvelous`` this way,
+alongside self-registering steps in the same pipeline):
+
+.. code-block:: bash
+
+   runlog run --id clinvar_filter --order 40 --root "${ROOT}" -- \
+       mamba run --no-capture-output -n clinvar-build clinvar-filter \
+       "${CLINVAR_DB}" -g "${genes[@]}" -o "${OUT_DIR}/clinvar_variants.tsv"
+
+Since the wrapped tool never touches the emitter, its full raw output is
+recorded by default. Add ``-i/--include-pattern`` to instead record only
+the lines matching a regex (e.g. a tool's own ``RESULT:``-prefixed
+summary lines) out of an otherwise noisy raw output -- see
+``resources/examples/pipeline/steps/external_tool.sh`` for a complete
+runnable version of this pattern.
+
 ``record`` Arguments
 ---------------------
 
@@ -244,17 +268,94 @@ records nothing by itself. ``log_count_summary`` prints and records one
 then resets that key's counter to 0. A key never passed to ``log_count``
 summarizes as ``0``.
 
+Failure Handling
+------------------
+
+A failed run should never produce a noisy diff against a working
+previous run, and a genuine crash should still leave something behind
+even if the script never touched the emitter:
+
+- ``runlog run`` marks a run failed automatically on a non-zero exit
+  code; ``runlog record --failed`` is the equivalent for output that's
+  already in hand (both are what ``runlog_setup`` delegates to
+  internally). A failed run's diff against the previous run is skipped
+  entirely -- see ``record()``'s ``failed`` parameter.
+- ``run``'s ``--raw-on-failure`` (off by default) appends the full raw
+  captured output under a divider, as a safety net for a crash that
+  never went through the emitter (e.g. an unhandled traceback).
+  ``runlog_setup``/``runlog_setup()`` do this unconditionally on
+  failure -- there is no flag to opt out, since there's no external
+  wrapper to catch the crash otherwise.
+- If a script's *previous* run had failed and this run succeeds,
+  ``record()`` shows ``- error resolved`` instead of a raw diff of the
+  error output disappearing.
+
+``resources/examples/pipeline/steps/flaky_step.sh`` exercises all three:
+run it once expecting failure, then again expecting success, via
+``resources/examples/pipeline/run_pipeline.sh``.
+
+Cluster / Multi-Submission Pipelines
+---------------------------------------
+
+``runlog_setup``'s automatic id/order derivation assumes sibling steps
+share a parent process (an orchestrator script invoking them directly).
+Two real scenarios break that assumption, both needing the
+``RUNLOG_SCRIPT_ID``/``RUNLOG_ORDER`` env var overrides (Bash) or the
+``script_id``/``order`` parameters (Python, see "Self-Registering"
+above) instead:
+
+- **A script submitted to a batch scheduler** (e.g. SLURM's ``sbatch``):
+  its ``$PPID`` at execution time is the scheduler's, not the
+  submitting shell's, so the PPID-scoped auto-order counter can't relate
+  it to its pipeline siblings. Set ``RUNLOG_ORDER`` explicitly (e.g.
+  ``mrsrc/prepare_mr.sh`` does ``export RUNLOG_ORDER=20`` before calling
+  ``runlog_setup``).
+- **One script invoked multiple times with a distinct logical identity
+  each time** (e.g. once per cohort/dataset): the auto-derived,
+  basename-based id would collide across calls, silently overwriting one
+  call's section with the next. Set ``RUNLOG_SCRIPT_ID`` explicitly per
+  call. ``mrsrc/extract_results.sh`` requires its caller to submit it via
+  ``sbatch --export=ALL,RUNLOG_SCRIPT_ID=<id>,RUNLOG_ORDER=<n>`` for
+  exactly this reason, failing fast if either is unset rather than
+  silently falling back to a scheduler-assigned script name.
+
+.. code-block:: bash
+
+   # From an orchestrator submitting the same script twice, e.g. per
+   # cohort -- mirrors sbatch --export=ALL,RUNLOG_SCRIPT_ID=...,RUNLOG_ORDER=...
+   RUNLOG_SCRIPT_ID=extract_cohort_a RUNLOG_ORDER=70 ./extract_results.sh
+   RUNLOG_SCRIPT_ID=extract_cohort_b RUNLOG_ORDER=71 ./extract_results.sh
+
+When several such scripts must run in a fixed order relative to each
+other (e.g. a "gather" step that combines every cohort's output),
+chain their batch-scheduler submissions with a dependency instead of
+relying on wall-clock timing -- ``mrsrc/extract_results_gather.sh`` is
+submitted with ``sbatch --dependency=afterok:<extraction job ids>`` so
+it only starts once every extraction job it depends on has finished
+successfully.
+
+``resources/examples/pipeline/steps/cluster_job.sh`` exercises the
+``RUNLOG_SCRIPT_ID``/``RUNLOG_ORDER`` override end to end (without
+needing an actual scheduler) via
+``resources/examples/pipeline/run_pipeline.sh``.
+
 Example Pipeline
 -----------------
 
-This is a **combined** example. ``resources/examples/pipeline/``
-contains a small, runnable example pipeline exercising
-``runlog_setup``/``runlog_setup()`` (a bash step and a python step,
-both self-registering and using the emitter above) and ``runlog
-record`` together. Run it with:
+This is a **combined** example, and the single place every feature
+above is exercised together. ``resources/examples/pipeline/`` contains
+a runnable pipeline covering: both emitter styles (standalone calls and
+all four levels' recording toggles), ``runlog_setup``/``runlog_setup()``
+self-registration, ``runlog run`` wrapping an external tool with
+``-i/--include-pattern``, ``runlog record``, ``log_stage``,
+``log_count``/``log_count_summary``, the ``RUNLOG_SCRIPT_ID``/
+``RUNLOG_ORDER`` overrides, and failure handling (including the "error
+resolved" note) -- run twice so real diffs are produced, not just
+first-run entries. Run it with:
 
 .. code-block:: bash
 
    ./resources/examples/pipeline/run_pipeline.sh
 
-See ``resources/examples/README.md`` for details.
+See ``resources/examples/README.md`` for a step-by-step breakdown of
+what each part of the pipeline demonstrates.

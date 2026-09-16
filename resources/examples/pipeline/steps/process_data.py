@@ -12,7 +12,7 @@ from __future__ import annotations
 import csv
 import sys
 
-from log_tools.emitter import log_error, log_info
+from log_tools.emitter import log_debug, log_error, log_info
 from log_tools.setup import runlog_setup
 
 
@@ -41,6 +41,7 @@ def main(argv: list[str]) -> int:
         log_info(f"Reading {in_path}")
         with open(in_path, newline="") as fh:
             rows = list(csv.DictReader(fh, delimiter="\t"))
+        log_debug(f"parsed {len(rows)} rows", record=True)
 
         total = sum(int(row["count"]) for row in rows)
         log_info(f"Processed {len(rows)} samples, total count = {total}")
