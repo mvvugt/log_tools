@@ -5,7 +5,7 @@ from pathlib import Path
 
 from log_tools.functions import atomic_write, get_git_info
 
-from .conftest import commit_hash, make_dirty
+from .conftest import commit_hash, make_dirty, make_non_script_dirty
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -28,12 +28,38 @@ def test_get_git_info_clean_repo(git_repo: Path) -> None:
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 def test_get_git_info_dirty_repo(git_repo: Path) -> None:
-    """An uncommitted change to a tracked file is reported as dirty."""
+    """An uncommitted change to a tracked script file is reported as dirty."""
     make_dirty(git_repo)
 
     commit, dirty = get_git_info(git_repo)
 
     assert commit == commit_hash(git_repo)
+    assert dirty is True
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_get_git_info_non_script_change_not_dirty(git_repo: Path) -> None:
+    """An uncommitted change to a non-script file is not reported as dirty.
+
+    Regression test: without filtering by extension, a project's own
+    run-log file (e.g. `RUN_LOG.md`) being rewritten every run would
+    permanently flag every subsequent run as dirty.
+    """
+    make_non_script_dirty(git_repo)
+
+    commit, dirty = get_git_info(git_repo)
+
+    assert commit == commit_hash(git_repo)
+    assert dirty is False
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_get_git_info_dirty_repo_untracked_script(git_repo: Path) -> None:
+    """A new, untracked script file is reported as dirty."""
+    (git_repo / "new_script.py").write_text("print('hi')\n")
+
+    _, dirty = get_git_info(git_repo)
+
     assert dirty is True
 
 

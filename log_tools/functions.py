@@ -11,6 +11,29 @@ import os
 import subprocess
 from pathlib import Path
 
+DIRTY_CHECK_EXTENSIONS: tuple[str, ...] = (".py", ".sh")
+"""File extensions that count towards `get_git_info`'s dirty flag."""
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def _is_script_status_line(line: str) -> bool:
+    """Whether a `git status --porcelain` line's path is a script file.
+
+    Parameters
+    ----------
+    line : `str`
+        One non-empty line from ``git status --porcelain`` output, e.g.
+        ``" M foo.py"`` or ``"R  old.py -> new.sh"``.
+
+    Returns
+    -------
+    is_script : `bool`
+        `True` if the line's path (the rename destination, if a rename)
+        ends with one of `DIRTY_CHECK_EXTENSIONS`.
+    """
+    path = line[3:].split(" -> ")[-1].strip().strip('"')
+    return path.endswith(DIRTY_CHECK_EXTENSIONS)
+
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 def get_git_info(root: Path) -> tuple[str, bool]:
@@ -27,8 +50,12 @@ def get_git_info(root: Path) -> tuple[str, bool]:
         Short commit hash, or ``"unknown"`` if `root` is not a git repo or
         git is not available.
     dirty : `bool`
-        `True` if the working tree has uncommitted changes; `False` if
-        clean or unknown.
+        `True` if a tracked or untracked script file (`.py`/`.sh`, see
+        `DIRTY_CHECK_EXTENSIONS`) has uncommitted changes; `False`
+        otherwise (including when only non-script files, e.g. a run-log
+        Markdown file rewritten by this very tool, are uncommitted --
+        without this filter, that self-rewrite would permanently flag
+        every subsequent run as dirty).
     """
     try:
         commit = subprocess.run(
@@ -39,7 +66,11 @@ def get_git_info(root: Path) -> tuple[str, bool]:
                 ["git", "-C", str(root), "status", "--porcelain"],
                 check=True, capture_output=True, text=True,
                 ).stdout
-        return commit, bool(status.strip())
+        dirty = any(
+                _is_script_status_line(line)
+                for line in status.splitlines() if line.strip()
+                )
+        return commit, dirty
     except (subprocess.CalledProcessError, FileNotFoundError):
         return "unknown", False
 

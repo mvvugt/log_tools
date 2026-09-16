@@ -29,7 +29,10 @@ def _git(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 @pytest.fixture
 def git_repo(tmp_path: Path) -> Path:
-    """A throwaway git repo with one committed file, `tracked.txt`.
+    """A throwaway git repo with two committed files.
+
+    ``tracked.py`` (a script file, for `make_dirty`) and ``tracked.md``
+    (a non-script file, for `make_non_script_dirty`).
 
     Returns
     -------
@@ -39,8 +42,9 @@ def git_repo(tmp_path: Path) -> Path:
     _git("init", "-q", cwd=tmp_path)
     _git("config", "user.name", "Test User", cwd=tmp_path)
     _git("config", "user.email", "test@example.com", cwd=tmp_path)
-    (tmp_path / "tracked.txt").write_text("hello\n")
-    _git("add", "tracked.txt", cwd=tmp_path)
+    (tmp_path / "tracked.py").write_text("hello\n")
+    (tmp_path / "tracked.md").write_text("hello\n")
+    _git("add", "tracked.py", "tracked.md", cwd=tmp_path)
     _git("commit", "-q", "-m", "initial", cwd=tmp_path)
     return tmp_path
 
@@ -53,8 +57,14 @@ def commit_hash(root: Path) -> str:
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 def make_dirty(root: Path) -> None:
-    """Modify the repo's tracked file so `git status` reports it dirty."""
-    (root / "tracked.txt").write_text("changed\n")
+    """Modify the repo's tracked script file so `get_git_info` flags dirty."""
+    (root / "tracked.py").write_text("changed\n")
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def make_non_script_dirty(root: Path) -> None:
+    """Modify the repo's tracked non-script file (should not flag dirty)."""
+    (root / "tracked.md").write_text("changed\n")
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
