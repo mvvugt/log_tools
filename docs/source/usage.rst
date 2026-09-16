@@ -31,6 +31,18 @@ Both print immediately; nothing is written to disk unless
 ``RUNLOG_RECORD_FILE`` happens to be set in the environment (see
 "Producing Recorded Output" below).
 
+A fifth call, ``log_stage(name)``, marks a stage boundary rather than
+logging a message: everything recorded after it, up to the next
+``log_stage`` call, is grouped under ``name`` when ``runlog`` later
+diffs this id's output against its previous run (see "Stage-Scoped
+Diffing" below). It always records and prints like ``log_info``, tagged
+``[stage]``.
+
+A sixth pair, ``log_count(key)`` / ``log_count_summary(key)``, batches
+high-cardinality events -- e.g. one call per file in a loop -- into a
+single recorded summary line instead of one row per event (see "Batched
+Summary Counts" below).
+
 ``runlog`` (standalone)
 ------------------------
 
@@ -167,6 +179,70 @@ out). ``log_debug`` is the opposite -- off by default, opt in with
 records. If a script never touches the emitter, ``runlog run`` falls
 back to recording the full raw captured output, so untouched scripts
 keep working unchanged.
+
+Stage-Scoped Diffing
+----------------------
+
+By default, ``record()`` diffs a script id's entire recorded output
+against its previous run as one blob. That's the wrong granularity for a
+script whose single execution has several logically independent
+sections -- e.g. one that prepares job configs for several unrelated
+job types, only some of which are touched on a given run. A whole-output
+diff would show the entire output changing even though only one section
+actually did.
+
+Call ``log_stage(name)`` between such sections to opt in to per-stage
+diffing:
+
+.. code-block:: bash
+
+   log_stage "prepare"
+   log_info "preparing job configs"
+   ...
+   log_stage "submit"
+   log_info "submitting jobs"
+
+``record()`` then diffs each stage independently:
+
+- A stage present in both the previous and current run is diffed on its
+  own -- a change in one stage no longer buries a diff in an unrelated
+  one.
+- A stage that appears for the first time is not diffed at all (there is
+  nothing meaningful to diff it against); its content still shows up
+  normally under ``Output:``.
+- A stage that was present previously but is absent this run gets a
+  one-line ``not present this run`` note instead of a diff.
+
+A script that never calls ``log_stage`` is unaffected -- its output is
+treated as a single implicit stage and diffed exactly as before.
+
+Batched Summary Counts
+-----------------------
+
+A loop that calls ``log_info`` once per item (e.g. once per file) bloats
+the recorded output for high-cardinality steps -- ``runlog``'s log ends
+up with hundreds of near-identical rows instead of something useful.
+Call ``log_count(key)`` in place of ``log_info`` inside the loop, then
+``log_count_summary(key)`` once after it to record a single summary line
+instead:
+
+.. code-block:: bash
+
+   for f in "${files[@]}"; do
+       if process "${f}"; then
+           log_count "files_ok"
+       else
+           log_count "files_failed"
+       fi
+   done
+   log_count_summary "files_ok" "files processed"
+   log_count_summary "files_failed" "files failed"
+
+``log_count`` only increments an in-process counter -- it prints and
+records nothing by itself. ``log_count_summary`` prints and records one
+``"<label or key>: <count>"`` line (like ``log_info``, always recorded),
+then resets that key's counter to 0. A key never passed to ``log_count``
+summarizes as ``0``.
 
 Example Pipeline
 -----------------

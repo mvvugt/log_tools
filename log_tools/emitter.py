@@ -12,6 +12,10 @@ given call out); `log_debug` is the opposite, off by default (pass
 ``record=True`` to opt in), since debug output is expected to be noisy.
 `log_error` always records. All four always print -- there is no
 level-based verbosity gate.
+
+`log_count`/`log_count_summary` batch high-cardinality events (e.g. one
+call per file in a loop) into a single recorded summary line instead of
+one row per event -- see `log_count_summary`.
 """
 from __future__ import annotations
 
@@ -36,6 +40,10 @@ _PREFIX_BY_LEVEL: dict[int, str] = {
         }
 
 _LOGGER_NAME = "log_tools"
+
+_counts: dict[str, int] = {}
+"""In-process counters keyed by `log_count`'s `key`, read/reset by
+`log_count_summary`. Not persisted -- scoped to a single script run."""
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -165,7 +165,13 @@ There are two ways to record a step:
 
 Either way, the emitter's `log_info`/`log_warn`/`log_error`/`log_debug`
 calls are what gets recorded — that's how emitter output from separate
-pipeline scripts ends up combined in one `RUN_LOG.md`.
+pipeline scripts ends up combined in one `RUN_LOG.md`. A script whose
+output naturally splits into independent sections can also call
+`log_stage(name)` between them, so `record()` diffs each stage on its
+own instead of diffing the whole output as one blob. For a
+high-cardinality loop (e.g. one call per file), `log_count(key)` /
+`log_count_summary(key)` batch it into one recorded summary line
+instead of one row per item.
 
 A full runnable example pipeline lives at
 `resources/examples/pipeline/` (a bash "fetch" step and a python
