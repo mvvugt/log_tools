@@ -50,6 +50,59 @@ def test_diff_text_truncates_long_diffs() -> None:
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def _emit(tag: str, timestamp: str, msg: str) -> str:
+    """Build an emitter-format line (tag padded to 8 chars, as the real
+    emitters print it), independent of `log_tools.emitter`."""
+    return f"{f'[{tag}]':<8}{timestamp} {msg}"
+
+
+def test_diff_text_ignores_emitter_timestamps() -> None:
+    """Outputs differing only in emitter timestamps give no diff, for every
+    tag width."""
+    tags = ("info", "warn", "debug", "error", "stage")
+    old = "\n".join(_emit(t, "2026-01-01 00:00:00", "msg") for t in tags)
+    new = "\n".join(_emit(t, "2026-09-23 12:34:56", "msg") for t in tags)
+
+    assert diff_text(old, new) is None
+
+
+def test_diff_text_real_change_keeps_original_timestamps() -> None:
+    """A genuinely changed message shows as -/+ lines with their original
+    timestamps; timestamp-only changes are not shown as -/+ lines."""
+    old = "\n".join([
+            _emit("info", "2026-01-01 00:00:00", "same"),
+            _emit("info", "2026-01-01 00:00:01", "built 3 targets"),
+            ])
+    new = "\n".join([
+            _emit("info", "2026-09-23 10:00:00", "same"),
+            _emit("info", "2026-09-23 10:00:01", "built 4 targets"),
+            ])
+
+    diff = diff_text(old, new)
+
+    assert diff is not None
+    lines = diff.splitlines()
+    assert f"-{_emit('info', '2026-01-01 00:00:01', 'built 3 targets')}" in (
+            lines)
+    assert f"+{_emit('info', '2026-09-23 10:00:01', 'built 4 targets')}" in (
+            lines)
+    changed = [ln for ln in lines if ln.startswith(("-", "+"))]
+    assert not any("same" in ln for ln in changed)
+
+
+def test_diff_text_non_emitter_timestamps_compared_verbatim() -> None:
+    """Only the emitter prefix is normalised: an untagged line starting
+    with a timestamp is still compared as-is."""
+    diff = diff_text(
+            "2026-01-01 00:00:00 foo", "2026-09-23 12:34:56 foo",
+            )
+
+    assert diff is not None
+    assert "-2026-01-01 00:00:00 foo" in diff
+    assert "+2026-09-23 12:34:56 foo" in diff
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # split_stages
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 def _stage_marker(name: str) -> str:
@@ -618,6 +671,32 @@ def test_record_no_stage_markers_diffs_whole_output_unlabeled(
     assert "stage `" not in diff_section
     assert "-old text" in diff_section
     assert "+new text" in diff_section
+
+
+def test_record_timestamp_only_stage_is_not_diffed(git_repo: Path) -> None:
+    """A stage whose lines differ only in emitter timestamps gets no diff
+    block, while a sibling stage with a real change does."""
+    log_file = git_repo / "RUN_LOG.md"
+
+    def _output(ts: str, b_msg: str) -> str:
+        """Two-stage output with all lines stamped `ts`."""
+        return "\n".join([
+                _emit("stage", ts, "a"), _emit("info", ts, "a unchanged"),
+                _emit("stage", ts, "b"), _emit("info", ts, b_msg),
+                ])
+
+    record(
+            log_file=log_file, script_id="s1", order=0,
+            output=_output("2026-01-01 00:00:00", "b v1"), root=git_repo,
+            )
+    record(
+            log_file=log_file, script_id="s1", order=0,
+            output=_output("2026-09-23 12:34:56", "b v2"), root=git_repo,
+            )
+
+    diff_section = log_file.read_text().split("Output:")[0]
+    assert "stage `b`" in diff_section
+    assert "stage `a`" not in diff_section
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

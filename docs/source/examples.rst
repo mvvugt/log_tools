@@ -34,9 +34,10 @@ therefore contains no diff blocks, by design.
 .. note::
 
    The output below was captured from a real run. The temp directory
-   path is shortened to ``<work_dir>`` and long command-line labels to
-   ``<repo>/...``; everything else is unchanged. Commit hashes and
-   timestamps will differ on your machine.
+   path is shortened to ``<work_dir>``, long command-line labels to
+   ``<repo>/...`` and the commit hash to ``<commit>``; everything else
+   is unchanged. Commit hashes and timestamps will differ on your
+   machine.
 
 Steps
 -----
@@ -94,102 +95,79 @@ section straight after that run:
 .. code-block:: text
 
    ## [10] fetch_data
-   - first run: 2026-09-23 12:47:23
-   - last run: 2026-09-23 12:47:25
-   - commit: `160016e`
+   - first run: 2026-09-23 13:05:25
+   - last run: 2026-09-23 13:05:26
+   - commit: `<commit>`
 
-   Δ vs previous run (was `160016e`):
+   Δ vs previous run (was `<commit>`):
    ```diff
    @@ -1,3 +1,3 @@
-   -[info]  2026-09-23 12:47:23 Fetching toy dataset into <work_dir>/raw_counts.tsv
-   -[debug] 2026-09-23 12:47:23 n_samples requested: 3
-   -[info]  2026-09-23 12:47:23 Wrote 4 lines to <work_dir>/raw_counts.tsv
-   +[info]  2026-09-23 12:47:25 Fetching toy dataset into <work_dir>/raw_counts.tsv
-   +[debug] 2026-09-23 12:47:25 n_samples requested: 4
-   +[info]  2026-09-23 12:47:25 Wrote 5 lines to <work_dir>/raw_counts.tsv
+    [info]  2026-09-23 13:05:26 Fetching toy dataset into <work_dir>/raw_counts.tsv
+   -[debug] 2026-09-23 13:05:25 n_samples requested: 3
+   -[info]  2026-09-23 13:05:25 Wrote 4 lines to <work_dir>/raw_counts.tsv
+   +[debug] 2026-09-23 13:05:26 n_samples requested: 4
+   +[info]  2026-09-23 13:05:26 Wrote 5 lines to <work_dir>/raw_counts.tsv
    ```
 
    Output:
    ```text
-   [info]  2026-09-23 12:47:25 Fetching toy dataset into <work_dir>/raw_counts.tsv
-   [debug] 2026-09-23 12:47:25 n_samples requested: 4
-   [info]  2026-09-23 12:47:25 Wrote 5 lines to <work_dir>/raw_counts.tsv
+   [info]  2026-09-23 13:05:26 Fetching toy dataset into <work_dir>/raw_counts.tsv
+   [debug] 2026-09-23 13:05:26 n_samples requested: 4
+   [info]  2026-09-23 13:05:26 Wrote 5 lines to <work_dir>/raw_counts.tsv
    ```
 
 Points to note:
 
 - ``first run`` stays at the pass-1 time; ``last run`` moves on.
+- Timestamps are ignored when comparing runs. The first line
+  (``Fetching toy dataset ...``) only differs by its timestamp, so it
+  is shown as unchanged context, not as a change. Changed lines keep
+  their original timestamps.
 - The ``[debug]`` line is recorded because the step opts it in with
   ``record``. Debug lines are not recorded by default.
 - A Python step's section title also shows its command line as a
   label, e.g. ``## [20] process_data (`<repo>/.../process_data.py
   <work_dir>`)``.
 
-.. warning::
-
-   **Known limitation: timestamp noise.** Every emitter line starts
-   with a timestamp, and diffs currently compare lines including it.
-   A re-run in a different second therefore shows *every* line as
-   changed. Above, the first line (``Fetching toy dataset ...``) only
-   differs by its timestamp. A fix (ignoring the timestamp when
-   diffing) is tracked as a follow-up.
-
 Stage-Scoped Diffs (``prepare_stages.sh``)
 ------------------------------------------
 
 The step calls ``log_stage "validate"`` and ``log_stage "build"``. In
 pass 2 it builds 4 artifacts instead of 3, so only ``build`` really
-changes. The diff is split per stage:
+changes. The diff is split per stage, so ``validate`` (unchanged
+apart from timestamps) is left out:
 
 .. code-block:: text
 
    ## [30] prepare_stages
-   - first run: 2026-09-23 12:47:24
-   - last run: 2026-09-23 12:47:25
-   - commit: `160016e`
+   - first run: 2026-09-23 13:05:25
+   - last run: 2026-09-23 13:05:26
+   - commit: `<commit>`
 
-   Δ vs previous run (was `160016e`):
-   stage `validate`:
-   ```diff
-   @@ -1,2 +1,2 @@
-   -[info]  2026-09-23 12:47:24 Checking <work_dir> is writable
-   -[info]  2026-09-23 12:47:24 Checked expected input files are present
-   +[info]  2026-09-23 12:47:25 Checking <work_dir> is writable
-   +[info]  2026-09-23 12:47:25 Checked expected input files are present
-   ```
+   Δ vs previous run (was `<commit>`):
    stage `build`:
    ```diff
    @@ -1,4 +1,5 @@
-   -[info]  2026-09-23 12:47:24 Building 3 artifact(s)
-   -[info]  2026-09-23 12:47:24 Built artifact_1
-   -[info]  2026-09-23 12:47:24 Built artifact_2
-   -[info]  2026-09-23 12:47:24 Built artifact_3
-   +[info]  2026-09-23 12:47:25 Building 4 artifact(s)
-   +[info]  2026-09-23 12:47:25 Built artifact_1
-   +[info]  2026-09-23 12:47:25 Built artifact_2
-   +[info]  2026-09-23 12:47:25 Built artifact_3
-   +[info]  2026-09-23 12:47:25 Built artifact_4
+   -[info]  2026-09-23 13:05:25 Building 3 artifact(s)
+   +[info]  2026-09-23 13:05:26 Building 4 artifact(s)
+    [info]  2026-09-23 13:05:26 Built artifact_1
+    [info]  2026-09-23 13:05:26 Built artifact_2
+    [info]  2026-09-23 13:05:26 Built artifact_3
+   +[info]  2026-09-23 13:05:26 Built artifact_4
    ```
 
    Output:
    ```text
-   [stage] 2026-09-23 12:47:25 validate
-   [info]  2026-09-23 12:47:25 Checking <work_dir> is writable
-   [info]  2026-09-23 12:47:25 Checked expected input files are present
-   [stage] 2026-09-23 12:47:25 build
-   [info]  2026-09-23 12:47:25 Building 4 artifact(s)
-   [info]  2026-09-23 12:47:25 Built artifact_1
-   [info]  2026-09-23 12:47:25 Built artifact_2
-   [info]  2026-09-23 12:47:25 Built artifact_3
-   [info]  2026-09-23 12:47:25 Built artifact_4
+   [stage] 2026-09-23 13:05:26 validate
+   [info]  2026-09-23 13:05:26 Checking <work_dir> is writable
+   [info]  2026-09-23 13:05:26 Checked expected input files are present
+   [stage] 2026-09-23 13:05:26 build
+   [info]  2026-09-23 13:05:26 Building 4 artifact(s)
+   [info]  2026-09-23 13:05:26 Built artifact_1
+   [info]  2026-09-23 13:05:26 Built artifact_2
+   [info]  2026-09-23 13:05:26 Built artifact_3
+   [info]  2026-09-23 13:05:26 Built artifact_4
    ```
-
-.. warning::
-
-   The ``validate`` stage should not appear in this diff: its content
-   is unchanged apart from timestamps. It shows up only because of the
-   timestamp limitation described above. Once that is fixed, only
-   ``stage `build`:`` will be listed.
 
 Batched Counts (``bulk_counts.py``)
 -----------------------------------
@@ -201,15 +179,15 @@ one line per outcome:
 .. code-block:: text
 
    ## [40] bulk_counts (`<repo>/.../bulk_counts.py`)
-   - first run: 2026-09-23 12:47:24
-   - last run: 2026-09-23 12:47:24
-   - commit: `160016e`
+   - first run: 2026-09-23 13:05:25
+   - last run: 2026-09-23 13:05:25
+   - commit: `<commit>`
 
    Output:
    ```text
-   [info]  2026-09-23 12:47:24 Processing 10 files
-   [info]  2026-09-23 12:47:24 files processed: 9
-   [info]  2026-09-23 12:47:24 files failed: 1
+   [info]  2026-09-23 13:05:25 Processing 10 files
+   [info]  2026-09-23 13:05:25 files processed: 9
+   [info]  2026-09-23 13:05:25 files failed: 1
    ```
 
 Wrapping an External Tool (``external_tool.sh``)
@@ -231,9 +209,9 @@ lines (``starting up...``, ``processing chunk 1/3`` and so on);
 .. code-block:: text
 
    ## [45] external_tool (`<repo>/.../external_tool.sh`)
-   - first run: 2026-09-23 12:47:24
-   - last run: 2026-09-23 12:47:24
-   - commit: `160016e`
+   - first run: 2026-09-23 13:05:25
+   - last run: 2026-09-23 13:05:25
+   - commit: `<commit>`
 
    Output:
    ```text
@@ -257,24 +235,24 @@ disappearing, ``record()`` notes ``- error resolved``:
 .. code-block:: text
 
    ## [50] flaky_step
-   - first run: 2026-09-23 12:47:24
-   - last run: 2026-09-23 12:47:25
-   - commit: `160016e`
+   - first run: 2026-09-23 13:05:26
+   - last run: 2026-09-23 13:05:27
+   - commit: `<commit>`
 
-   Δ vs previous run (was `160016e`):
+   Δ vs previous run (was `<commit>`):
    - error resolved
    ```diff
    @@ -1,2 +1,2 @@
-   -[info]  2026-09-23 12:47:24 attempting the flaky operation (mode=fail)
-   -[error] 2026-09-23 12:47:24 flaky operation failed
-   +[info]  2026-09-23 12:47:25 attempting the flaky operation (mode=succeed)
-   +[info]  2026-09-23 12:47:25 flaky operation succeeded
+   -[info]  2026-09-23 13:05:26 attempting the flaky operation (mode=fail)
+   -[error] 2026-09-23 13:05:26 flaky operation failed
+   +[info]  2026-09-23 13:05:27 attempting the flaky operation (mode=succeed)
+   +[info]  2026-09-23 13:05:27 flaky operation succeeded
    ```
 
    Output:
    ```text
-   [info]  2026-09-23 12:47:25 attempting the flaky operation (mode=succeed)
-   [info]  2026-09-23 12:47:25 flaky operation succeeded
+   [info]  2026-09-23 13:05:27 attempting the flaky operation (mode=succeed)
+   [info]  2026-09-23 13:05:27 flaky operation succeeded
    ```
 
 ``first run`` keeps the time of the failed pass-1 run: a failure still
@@ -300,14 +278,14 @@ own section:
 .. code-block:: text
 
    ## [60] cluster_job_cohort_a
-   - first run: 2026-09-23 12:47:24
-   - last run: 2026-09-23 12:47:24
-   - commit: `160016e`
+   - first run: 2026-09-23 13:05:26
+   - last run: 2026-09-23 13:05:26
+   - commit: `<commit>`
 
    Output:
    ```text
-   [info]  2026-09-23 12:47:24 Processing dataset 'cohort_a' as cluster_job_cohort_a
-   [info]  2026-09-23 12:47:24 Done with 'cohort_a'
+   [info]  2026-09-23 13:05:26 Processing dataset 'cohort_a' as cluster_job_cohort_a
+   [info]  2026-09-23 13:05:26 Done with 'cohort_a'
    ```
 
    ## [61] cluster_job_cohort_b
@@ -330,11 +308,11 @@ in hand:
 .. code-block:: text
 
    ## [900] pipeline_summary
-   - first run: 2026-09-23 12:47:25
-   - last run: 2026-09-23 12:47:25
-   - commit: `160016e`
+   - first run: 2026-09-23 13:05:27
+   - last run: 2026-09-23 13:05:27
+   - commit: `<commit>`
 
    Output:
    ```text
-   Pipeline finished at 2026-09-23T10:47:25Z
+   Pipeline finished at 2026-09-23T11:05:27Z
    ```

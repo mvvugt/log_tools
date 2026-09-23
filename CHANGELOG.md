@@ -26,4 +26,5 @@
 * FEAT - Record a `- first run:` date per id in `RUN_LOG.md`, set once and preserved across runs (older logs fall back to the entry's `last run`).
 * FEAT - Only mark a run `(dirty)` when uncommitted/untracked `.py`/`.sh` files exist (`DIRTY_CHECK_EXTENSIONS`), not for any working-tree change.
 * DOCS - Document the `RUN_LOG.md` section format (first run, dirty flag scope) in `docs/source/usage.rst`.
-* DOCS - Add `docs/source/examples.rst`, a step-by-step walkthrough of the example pipeline with captured `RUN_LOG.md` output, including a note on the known timestamp-noise limitation in diffs.
+* DOCS - Add `docs/source/examples.rst`, a step-by-step walkthrough of the example pipeline with captured `RUN_LOG.md` output.
+* FIX - Ignore emitter timestamps when diffing (`diff_text()`), so lines/stages that only differ in time no longer show as changed; changed lines keep their original timestamps.

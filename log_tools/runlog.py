@@ -55,9 +55,17 @@ class Constants:
             r"^\[stage\] \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} (.+)$"
             )
     """Matches a `log_stage` marker line; group 1 is the stage name."""
+    EMITTER_TIMESTAMP_PATTERN: str = (
+            r"^(\[[A-Za-z]+\]\s+)\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} "
+            )
+    """Matches an emitter line's tag + timestamp prefix; group 1 is the
+    padded tag. Used by `diff_text` to ignore timestamps when comparing."""
     DEFAULT_STAGE_KEY: str = ""
     """`split_stages` key for content before the first marker, or the
     whole output when there are no markers at all."""
+
+
+_EMITTER_TIMESTAMP_RE = re.compile(Constants.EMITTER_TIMESTAMP_PATTERN)
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -206,19 +214,88 @@ def diff_text(old: str, new: str) -> str | None:
     diff : `str` or `None`
         Unified diff text (no file headers), truncated to
         `Constants.MAX_DIFF_LINES` with a trailing note if longer. `None`
-        if `old` and `new` are identical.
+        if `old` and `new` are identical once emitter timestamps are
+        ignored.
+
+    Notes
+    -----
+    Lines are compared with their emitter timestamp removed (see
+    `_strip_emitter_timestamp`), so a line that only differs in when it
+    was logged is not a change. The diff itself shows the original
+    lines, timestamps included; unchanged context lines are taken from
+    `new`.
     """
-    if old == new:
+    old_lines = old.splitlines()
+    new_lines = new.splitlines()
+    old_norm = [_strip_emitter_timestamp(line) for line in old_lines]
+    new_norm = [_strip_emitter_timestamp(line) for line in new_lines]
+    if old_norm == new_norm:
         return None
 
-    diff_lines = list(difflib.unified_diff(
-            old.splitlines(), new.splitlines(), lineterm="",
-            ))[2:]  # drop the "---"/"+++" file-header lines
+    matcher = difflib.SequenceMatcher(None, old_norm, new_norm)
+    diff_lines: list[str] = []
+    for group in matcher.get_grouped_opcodes(3):
+        first, last = group[0], group[-1]
+        old_range = _unified_range(first[1], last[2])
+        new_range = _unified_range(first[3], last[4])
+        diff_lines.append(f"@@ -{old_range} +{new_range} @@")
+        for tag, i1, i2, j1, j2 in group:
+            if tag == "equal":
+                diff_lines.extend(f" {line}" for line in new_lines[j1:j2])
+                continue
+            diff_lines.extend(f"-{line}" for line in old_lines[i1:i2])
+            diff_lines.extend(f"+{line}" for line in new_lines[j1:j2])
+
     if len(diff_lines) > Constants.MAX_DIFF_LINES:
         omitted = len(diff_lines) - Constants.MAX_DIFF_LINES
         diff_lines = diff_lines[:Constants.MAX_DIFF_LINES]
         diff_lines.append(f"... {omitted} more line(s) omitted")
     return "\n".join(diff_lines)
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def _strip_emitter_timestamp(line: str) -> str:
+    """Remove an emitter line's timestamp, keeping its tag.
+
+    Parameters
+    ----------
+    line : `str`
+        One output line, e.g. ``[info]  2026-01-01 00:00:00 msg``.
+
+    Returns
+    -------
+    line : `str`
+        The line without its timestamp (``[info]  msg``), or unchanged if
+        it does not match `Constants.EMITTER_TIMESTAMP_PATTERN`.
+    """
+    return _EMITTER_TIMESTAMP_RE.sub(r"\1", line, count=1)
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def _unified_range(start: int, stop: int) -> str:
+    """Format a line range for a unified-diff ``@@`` hunk header.
+
+    Parameters
+    ----------
+    start : `int`
+        Zero-based start index of the range.
+    stop : `int`
+        Zero-based exclusive end index of the range.
+
+    Returns
+    -------
+    range : `str`
+        ``"start,length"`` (one-based), ``"start"`` for a single line, or
+        ``"start,0"`` for an empty range -- matching `difflib`'s own
+        formatting.
+    """
+    length = stop - start
+    beginning = start + 1
+    if length == 1:
+        return f"{beginning}"
+    if length == 0:
+        beginning -= 1  # empty ranges begin at the line just before
+    return f"{beginning},{length}"
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

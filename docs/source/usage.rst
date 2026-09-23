@@ -92,7 +92,10 @@ on each run and sorted by ``--order``:
   ``DIRTY_CHECK_EXTENSIONS`` in :doc:`api/functions`).
 - **status** -- ``- status: failed`` appears only for a failed run.
 - **Δ vs previous run** -- only when the output changed since the
-  previous run, and never on a failed run. The diff is recomputed on
+  previous run, and never on a failed run. Emitter timestamps are
+  ignored when comparing, so a line that only differs in when it was
+  logged is not a change; changed lines are still shown with their
+  timestamps. The diff is recomputed on
   every ``record()`` and not kept, so it disappears the next time any
   id is recorded.
 - **Output** -- what was recorded (see "Producing Recorded Output").

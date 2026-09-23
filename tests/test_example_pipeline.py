@@ -59,6 +59,9 @@ def test_example_pipeline_demonstrates_diffing_features() -> None:
     assert result.returncode == 0, result.stderr
     assert "changes vs previous run of 'fetch_data'" in result.stdout
     assert "stage `build`:" in result.stdout
+    # `validate`'s content is unchanged across runs -- only its emitter
+    # timestamps differ -- so it must not be diffed.
+    assert "stage `validate`:" not in result.stdout
     assert "files processed: 9" in result.stdout
     assert "files failed: 1" in result.stdout
     assert "error resolved" in result.stdout
