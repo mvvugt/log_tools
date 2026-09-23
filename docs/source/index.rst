@@ -13,4 +13,5 @@ capture its calls into that same log across a whole pipeline.
 
    getting_started
    usage
+   examples
    api

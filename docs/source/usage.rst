@@ -55,6 +55,50 @@ never touches the emitter still gets its full raw output recorded (see
 ``run``'s ``--raw-on-failure`` and the fallback behaviour described
 under "Producing Recorded Output").
 
+Log File Format
+---------------
+
+Every recorded id gets exactly one section in ``RUN_LOG.md``, replaced
+on each run and sorted by ``--order``:
+
+.. code-block:: text
+
+   ## [20] process_data (`python3 process_data.py /data`)
+   - first run: 2026-09-01 09:12:03
+   - last run: 2026-09-23 12:47:25
+   - commit: `160016e` (dirty)
+   - status: failed
+
+   Δ vs previous run (was `9b4110c`):
+   ```diff
+   ...
+   ```
+
+   Output:
+   ```text
+   ...
+   ```
+
+- **Title** -- ``[order] id``, plus the label (for ``runlog run``, the
+  wrapped command line) in backticks when there is one.
+- **first run** -- set on the first ``record()`` for this id and never
+  changed afterwards, including after a failed run. A log written
+  before this field existed falls back to that section's ``last run``.
+- **last run** -- the time of the latest ``record()`` call.
+- **commit** -- the short ``HEAD`` hash of ``--root``'s repository.
+  ``(dirty)`` is added only when a ``.py`` or ``.sh`` file (tracked or
+  untracked) has uncommitted changes. Changes to other files, such as
+  data, notebooks or ``RUN_LOG.md`` itself, do not count (see
+  ``DIRTY_CHECK_EXTENSIONS`` in :doc:`api/functions`).
+- **status** -- ``- status: failed`` appears only for a failed run.
+- **Δ vs previous run** -- only when the output changed since the
+  previous run, and never on a failed run. The diff is recomputed on
+  every ``record()`` and not kept, so it disappears the next time any
+  id is recorded.
+- **Output** -- what was recorded (see "Producing Recorded Output").
+
+See :doc:`examples` for real sections produced by the example pipeline.
+
 Shared Options
 --------------
 
@@ -71,6 +115,7 @@ Shared Options
    * - ``--root``
      - Git working-tree root used to resolve the commit hash/dirty flag
        (default: resolved via ``git rev-parse --show-toplevel`` from cwd).
+       See "Log File Format" for what counts as dirty.
    * - ``--log-file``
      - Log file path (default: ``<root>/RUN_LOG.md``).
    * - ``-i``, ``--include-pattern``
@@ -357,5 +402,5 @@ first-run entries. Run it with:
 
    ./resources/examples/pipeline/run_pipeline.sh
 
-See ``resources/examples/README.md`` for a step-by-step breakdown of
-what each part of the pipeline demonstrates.
+See :doc:`examples` for a step-by-step walkthrough with the
+``RUN_LOG.md`` output each step produces.

@@ -56,7 +56,9 @@ To run it (after `pip install -e .` from the repo root, so `runlog`,
 
 It writes its own throwaway `RUN_LOG.md` under a temp directory (never
 the real project log), so running the script is a complete
-demonstration by itself.
+demonstration by itself. For the `RUN_LOG.md` output each step
+produces, see the online docs' Examples page
+(`docs/source/examples.rst`).
 
 ## Notebooks
 
