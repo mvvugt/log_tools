@@ -348,9 +348,21 @@ Cluster / Multi-Submission Pipelines
 ``runlog_setup``'s automatic id/order derivation assumes sibling steps
 share a parent process (an orchestrator script invoking them directly).
 Two real scenarios break that assumption, both needing the
-``RUNLOG_SCRIPT_ID``/``RUNLOG_ORDER`` env var overrides (Bash) or the
-``script_id``/``order`` parameters (Python, see "Self-Registering"
-above) instead:
+``RUNLOG_SCRIPT_ID``/``RUNLOG_ORDER`` env var overrides (read by both
+Bash and Python ``runlog_setup``) or the ``script_id``/``order``
+parameters (Python, see "Self-Registering" above; an explicit parameter
+wins over the env var) instead.
+
+.. note::
+
+   Because Python honours the same env vars, an ``export``-ed
+   ``RUNLOG_SCRIPT_ID`` in a Bash wrapper is inherited by any Python
+   ``runlog_setup`` step the wrapper runs, so both write to the same
+   section and the wrapper (whose teardown runs last) overwrites it.
+   When a wrapper and its child both self-register, set the wrapper's
+   values without ``export`` (e.g. ``RUNLOG_SCRIPT_ID=step_job`` on its
+   own line), or pass ``script_id=`` in the child.
+
 
 - **A script submitted to a batch scheduler** (e.g. SLURM's ``sbatch``):
   its ``$PPID`` at execution time is the scheduler's, not the

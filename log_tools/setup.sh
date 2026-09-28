@@ -291,9 +291,11 @@ _runlog_teardown() {
     local -a failed_flag=()
     [[ "${exit_code}" -ne 0 ]] && failed_flag=(--failed)
 
+    # `${arr[@]+"${arr[@]}"}`, not `"${arr[@]}"`: bash < 4.4 treats an
+    # empty array as unbound under `set -u`, which would abort this trap.
     runlog record --id "${_RUNLOG_SCRIPT_ID}" --order "${_RUNLOG_ORDER}" \
             --root "${_RUNLOG_ROOT}" --log-file "${_RUNLOG_LOG_FILE}" \
-            "${failed_flag[@]}" --stdin <<< "${output}"
+            ${failed_flag[@]+"${failed_flag[@]}"} --stdin <<< "${output}"
 
     rm -f "${_RUNLOG_RAW_TMP}" "${RUNLOG_RECORD_FILE}"
 }

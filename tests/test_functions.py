@@ -1,6 +1,9 @@
 """Unit tests for `log_tools.functions`."""
 from __future__ import annotations
 
+import os
+import stat
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from log_tools.functions import atomic_write, get_git_info
@@ -93,3 +96,49 @@ def test_atomic_write_leaves_no_tmp_file(tmp_path: Path) -> None:
 
     leftovers = list(tmp_path.glob("*.tmp"))
     assert leftovers == []
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_atomic_write_concurrent_writers_do_not_crash(tmp_path: Path) -> None:
+    """Many concurrent writers to one path (e.g. SGE array tasks sharing
+    RUN_LOG.md) raise nothing, leave no temp files, and the result is
+    one writer's complete payload, never a mix."""
+    target = tmp_path / "RUN_LOG.md"
+    payloads = [f"writer {i}\n" * 2000 for i in range(16)]
+
+    def _write_many(payload: str) -> None:
+        """Write `payload` to `target` repeatedly."""
+        for _ in range(25):
+            atomic_write(target, payload)
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        list(pool.map(_write_many, payloads))
+
+    assert target.read_text() in payloads
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_atomic_write_preserves_existing_mode(tmp_path: Path) -> None:
+    """Replacing an existing file keeps its permission bits."""
+    target = tmp_path / "out.md"
+    target.write_text("old")
+    target.chmod(0o640)
+
+    atomic_write(target, "new")
+
+    assert stat.S_IMODE(target.stat().st_mode) == 0o640
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_atomic_write_new_file_follows_umask(tmp_path: Path) -> None:
+    """A newly created file gets the usual `0o666 & ~umask` mode, not
+    the owner-only mode of a raw temp file."""
+    target = tmp_path / "out.md"
+    old_umask = os.umask(0o022)
+    try:
+        atomic_write(target, "content")
+    finally:
+        os.umask(old_umask)
+
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644

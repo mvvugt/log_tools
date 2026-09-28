@@ -12,6 +12,7 @@ otherwise.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import textwrap
@@ -19,6 +20,12 @@ from pathlib import Path
 
 import pytest
 
+from .conftest import REPO_ROOT
+
+_SHELL_FILES = sorted((REPO_ROOT / "log_tools").glob("*.sh"))
+# `"${name[@]}"` not preceded by `+` (i.e. not the bash-4.2-safe
+# `${name[@]+"${name[@]}"}` form) and not a key listing `${!name[@]}`.
+_UNGUARDED_ARRAY = re.compile(r'(?<!\+)"\$\{(?!!)[A-Za-z_]\w*\[@\]\}"')
 _SKIP_REASON = (
         "requires `log_tools` installed on PATH (pip install -e .)"
         )
@@ -213,3 +220,57 @@ def test_env_var_overrides_log_file_and_root(
     assert custom_log.is_file()
     assert not (git_repo / "RUN_LOG.md").is_file()
     assert "override_step" in custom_log.read_text()
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_shell_files_found() -> None:
+    """Guard for the static check below: it must scan real files."""
+    names = {path.name for path in _SHELL_FILES}
+    assert {"setup.sh", "emitter.sh"} <= names
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+@pytest.mark.parametrize("path", _SHELL_FILES, ids=lambda p: p.name)
+def test_no_unguarded_array_expansion(path: Path) -> None:
+    """No `"${arr[@]}"` expansion that bash < 4.4 treats as unbound when
+    `arr` is empty under `set -u` (the Myriad bash 4.2 teardown crash);
+    use `${arr[@]+"${arr[@]}"}` instead."""
+    offending = [
+            f"{lineno}: {line.strip()}"
+            for lineno, line in enumerate(path.read_text().splitlines(), 1)
+            if not line.lstrip().startswith("#")
+            and _UNGUARDED_ARRAY.search(line)
+            ]
+    assert offending == []
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+@pytest.mark.skipif(_SKIP, reason=_SKIP_REASON)
+@pytest.mark.parametrize("exit_code", [0, 1])
+def test_strict_mode_after_setup_keeps_exit_code(
+        git_repo: Path, exit_code: int,
+        ) -> None:
+    """With `set -u` enabled after `runlog_setup` (the Myriad wrapper
+    pattern), teardown completes, the script's own exit code is
+    preserved, and no 'unbound variable' error is printed."""
+    script = git_repo / "strict_step.sh"
+    script.write_text(
+            "#!/usr/bin/env bash\n"
+            '# shellcheck disable=SC1090\n'
+            'source "$(runlog-setup-path)"\n'
+            "runlog_setup\n"
+            "set -euo pipefail\n"
+            'log_info "strict"\n'
+            f"exit {exit_code}\n"
+            )
+    script.chmod(0o755)
+
+    result = subprocess.run(
+            [str(script)], cwd=git_repo, capture_output=True, text=True,
+            )
+
+    assert result.returncode == exit_code
+    assert "unbound variable" not in result.stdout + result.stderr
+    text = (git_repo / "RUN_LOG.md").read_text()
+    assert _order_of(text, "strict_step") > 0
+    assert ("- status: failed" in text) is (exit_code != 0)

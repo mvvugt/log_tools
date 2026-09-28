@@ -28,3 +28,6 @@
 * DOCS - Document the `RUN_LOG.md` section format (first run, dirty flag scope) in `docs/source/usage.rst`.
 * DOCS - Add `docs/source/examples.rst`, a step-by-step walkthrough of the example pipeline with captured `RUN_LOG.md` output.
 * FIX - Ignore emitter timestamps when diffing (`diff_text()`), so lines/stages that only differ in time no longer show as changed; changed lines keep their original timestamps.
+* FIX - Guard the empty `failed_flag` array expansion in `log_tools/setup.sh`'s teardown, which aborted the EXIT trap under `set -u` on bash < 4.4 (no RUN_LOG.md entry, successful jobs exiting 1).
+* FEAT - Python `runlog_setup()` now honours the `RUNLOG_SCRIPT_ID`/`RUNLOG_ORDER` env vars like `setup.sh`; explicit `script_id=`/`order=` arguments still take precedence.
+* FIX - `atomic_write()` uses a unique temp file per call (no crash when concurrent writers, e.g. SGE array tasks, share one RUN_LOG.md) and preserves the destination's permission bits.

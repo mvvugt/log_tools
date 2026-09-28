@@ -8,7 +8,9 @@ for that).
 from __future__ import annotations
 
 import os
+import stat
 import subprocess
+import tempfile
 from pathlib import Path
 
 DIRTY_CHECK_EXTENSIONS: tuple[str, ...] = (".py", ".sh")
@@ -126,8 +128,31 @@ def atomic_write(path: Path, content: str) -> None:
     Writes to a temp file in the same directory as `path`, then moves it
     into place with `os.replace`, so a crash mid-write cannot corrupt the
     destination file.
+
+    The temp file name is unique per call (`tempfile.mkstemp`), so
+    concurrent writers (e.g. SGE array tasks sharing one RUN_LOG.md)
+    never collide on it. The last `os.replace` wins; updates are not
+    merged. The result keeps the existing file's permission bits, or
+    gets ``0o666 & ~umask`` when newly created.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    tmp_path.write_text(content)
-    os.replace(tmp_path, path)
+    if path.exists():
+        mode = stat.S_IMODE(path.stat().st_mode)
+    else:
+        # No portable read-only umask getter: set-and-restore. Only hit
+        # when the file is first created.
+        umask = os.umask(0)
+        os.umask(umask)
+        mode = 0o666 & ~umask
+    fd, tmp_name = tempfile.mkstemp(
+            dir=path.parent, prefix=f".{path.name}.", suffix=".tmp",
+            )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(content)
+        os.chmod(tmp_path, mode)
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise

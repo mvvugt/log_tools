@@ -307,3 +307,76 @@ def test_stale_order_state_is_discarded(git_repo: Path) -> None:
     text = (git_repo / "RUN_LOG.md").read_text()
     order = _order_of(text, name)
     assert order == Constants.ORDER_STEP
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_runlog_order_env_var_overrides_autoincrement(git_repo: Path) -> None:
+    """`RUNLOG_ORDER` wins over the PPID-scoped counter, matching
+    `log_tools/setup.sh`."""
+    name = _unique_step_name("env_order")
+    script = _write_step_script(git_repo, name, 'print("env order")')
+
+    result = _run_step(
+            script, cwd=git_repo, env_extra={"RUNLOG_ORDER": "4343"},
+            )
+
+    assert result.returncode == 0, result.stderr
+    text = (git_repo / "RUN_LOG.md").read_text()
+    assert _order_of(text, name) == 4343
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_runlog_script_id_env_var_overrides_filename(git_repo: Path) -> None:
+    """`RUNLOG_SCRIPT_ID` wins over the filename-derived default,
+    matching `log_tools/setup.sh`."""
+    name = _unique_step_name("env_stem")
+    env_id = _unique_step_name("env_id")
+    script = _write_step_script(git_repo, name, 'print("env id")')
+
+    result = _run_step(
+            script, cwd=git_repo, env_extra={"RUNLOG_SCRIPT_ID": env_id},
+            )
+
+    assert result.returncode == 0, result.stderr
+    text = (git_repo / "RUN_LOG.md").read_text()
+    assert _order_of(text, env_id) > 0
+    assert f"] {name}" not in text
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_explicit_args_beat_env_vars(git_repo: Path) -> None:
+    """Explicit `script_id=`/`order=` arguments take precedence over
+    `RUNLOG_SCRIPT_ID`/`RUNLOG_ORDER`."""
+    name = _unique_step_name("arg_stem")
+    arg_id = _unique_step_name("arg_id")
+    path = git_repo / f"{name}.py"
+    path.write_text(
+            "from log_tools.setup import runlog_setup\n"
+            f'with runlog_setup(script_id="{arg_id}", order=7):\n'
+            '    print("args win")\n',
+            )
+
+    result = _run_step(
+            path, cwd=git_repo,
+            env_extra={"RUNLOG_SCRIPT_ID": "env_loses", "RUNLOG_ORDER": "99"},
+            )
+
+    assert result.returncode == 0, result.stderr
+    text = (git_repo / "RUN_LOG.md").read_text()
+    assert _order_of(text, arg_id) == 7
+    assert "env_loses" not in text
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_non_integer_runlog_order_raises(git_repo: Path) -> None:
+    """A non-integer `RUNLOG_ORDER` fails loudly, naming the variable."""
+    name = _unique_step_name("bad_order")
+    script = _write_step_script(git_repo, name, 'print("never")')
+
+    result = _run_step(
+            script, cwd=git_repo, env_extra={"RUNLOG_ORDER": "ten"},
+            )
+
+    assert result.returncode != 0
+    assert "ValueError" in result.stderr
+    assert "RUNLOG_ORDER" in result.stderr

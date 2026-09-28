@@ -50,6 +50,8 @@ class Constants:
     LOCK_MAX_TRIES: int = 200
     LOG_FILE_ENV_VAR: str = "RUNLOG_LOG_FILE"
     ROOT_ENV_VAR: str = "RUNLOG_ROOT"
+    SCRIPT_ID_ENV_VAR: str = "RUNLOG_SCRIPT_ID"
+    ORDER_ENV_VAR: str = "RUNLOG_ORDER"
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -238,17 +240,55 @@ def _resolve_log_file_for_setup(log_file: Path | None, root: Path) -> Path:
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def _resolve_script_id_for_setup(script_id: str | None) -> str:
+    """Resolve the script id for `RunlogSetup`: explicit, then
+    `Constants.SCRIPT_ID_ENV_VAR`, then `Path(sys.argv[0]).stem`."""
+    if script_id:
+        return script_id
+    env_script_id = os.environ.get(Constants.SCRIPT_ID_ENV_VAR)
+    if env_script_id:
+        return env_script_id
+    return Path(sys.argv[0]).stem
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def _resolve_order_for_setup(order: int | None, script_id: str) -> int:
+    """Resolve the order for `RunlogSetup`: explicit, then
+    `Constants.ORDER_ENV_VAR`, then `resolve_order()` on the PPID.
+
+    Raises
+    ------
+    ValueError
+        If `Constants.ORDER_ENV_VAR` is set but is not an integer.
+    """
+    if order is not None:
+        return order
+    env_order = os.environ.get(Constants.ORDER_ENV_VAR)
+    if env_order:
+        try:
+            return int(env_order)
+        except ValueError:
+            raise ValueError(
+                    f"{Constants.ORDER_ENV_VAR} must be an integer, got "
+                    f"{env_order!r}",
+                    ) from None
+    return resolve_order(os.getppid(), script_id)
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 class RunlogSetup:
     """Context manager registering the current script's run in RUN_LOG.md.
 
     Parameters
     ----------
     script_id : `str` or `None`, optional
-        Overrides the automatically derived id
-        (`Path(sys.argv[0]).stem`).
+        Overrides `Constants.SCRIPT_ID_ENV_VAR` (``RUNLOG_SCRIPT_ID``)
+        and the automatically derived id (`Path(sys.argv[0]).stem`).
     order : `int` or `None`, optional
-        Overrides the automatically derived order (`resolve_order()`,
-        scoped to `os.getppid()`). Needed whenever a step's real
+        Overrides `Constants.ORDER_ENV_VAR` (``RUNLOG_ORDER``) and the
+        automatically derived order (`resolve_order()`, scoped to
+        `os.getppid()`); the env vars match `log_tools/setup.sh`.
+        Needed whenever a step's real
         run-time process ancestry doesn't match its logical pipeline
         position -- e.g. a script submitted to a batch scheduler (its
         `PPID` at execution time has no relation to the submitting
@@ -295,11 +335,11 @@ class RunlogSetup:
         self.log_file = _resolve_log_file_for_setup(
                 self._log_file_override, self.root,
                 )
-        self.script_id = self._script_id_override or Path(sys.argv[0]).stem
-        self.order = (
-                self._order_override
-                if self._order_override is not None
-                else resolve_order(os.getppid(), self.script_id)
+        self.script_id = _resolve_script_id_for_setup(
+                self._script_id_override,
+                )
+        self.order = _resolve_order_for_setup(
+                self._order_override, self.script_id,
                 )
 
         record_fd, record_path_str = tempfile.mkstemp(
