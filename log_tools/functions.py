@@ -7,14 +7,24 @@ for that).
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import stat
 import subprocess
 import tempfile
+import time
+from collections.abc import Iterator
 from pathlib import Path
 
 DIRTY_CHECK_EXTENSIONS: tuple[str, ...] = (".py", ".sh")
 """File extensions that count towards `get_git_info`'s dirty flag."""
+LOCK_POLL_INTERVAL_SECONDS: float = 0.05
+"""How often `file_lock` retries a held lock."""
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+class LockTimeoutError(RuntimeError):
+    """Raised when `file_lock` cannot acquire its lock within `timeout`."""
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -132,8 +142,10 @@ def atomic_write(path: Path, content: str) -> None:
     The temp file name is unique per call (`tempfile.mkstemp`), so
     concurrent writers (e.g. SGE array tasks sharing one RUN_LOG.md)
     never collide on it. The last `os.replace` wins; updates are not
-    merged. The result keeps the existing file's permission bits, or
-    gets ``0o666 & ~umask`` when newly created.
+    merged -- callers doing a read-modify-write must hold `file_lock`
+    (as `log_tools.runlog.record` does). The result keeps the existing
+    file's permission bits, or gets ``0o666 & ~umask`` when newly
+    created.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
@@ -156,3 +168,93 @@ def atomic_write(path: Path, content: str) -> None:
     except BaseException:
         tmp_path.unlink(missing_ok=True)
         raise
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def _break_if_stale(lock_path: Path, stale_after: float) -> bool:
+    """Remove `lock_path` if it is older than `stale_after` seconds.
+
+    Parameters
+    ----------
+    lock_path : `Path`
+        The lock directory.
+    stale_after : `float`
+        Age in seconds (by the dir's mtime) after which a lock is
+        considered abandoned, e.g. left by a killed job.
+
+    Returns
+    -------
+    broken : `bool`
+        `True` if the lock was stale and removed (or already gone).
+    """
+    try:
+        age = time.time() - lock_path.stat().st_mtime
+    except FileNotFoundError:
+        return True
+    if age <= stale_after:
+        return False
+    with contextlib.suppress(FileNotFoundError):
+        lock_path.rmdir()
+    return True
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+@contextlib.contextmanager
+def file_lock(
+        lock_path: Path, *, timeout: float, stale_after: float,
+        poll_interval: float = LOCK_POLL_INTERVAL_SECONDS,
+        ) -> Iterator[None]:
+    """Hold an exclusive, cross-process lock for the duration of a block.
+
+    Parameters
+    ----------
+    lock_path : `Path`
+        Lock directory to create, e.g. ``RUN_LOG.md.lock``. Its parent
+        must exist.
+    timeout : `float`
+        Seconds to keep retrying a held lock before giving up.
+    stale_after : `float`
+        A lock dir older than this many seconds is treated as abandoned
+        and broken.
+    poll_interval : `float`, optional, default: `LOCK_POLL_INTERVAL_SECONDS`
+        Seconds between retries.
+
+    Raises
+    ------
+    LockTimeoutError
+        If the lock is still held (and not stale) after `timeout`.
+    OSError
+        If the lock dir cannot be created for another reason (e.g. the
+        parent is missing or not writable).
+
+    Notes
+    -----
+    Uses atomic ``mkdir`` rather than ``fcntl.flock``: ``mkdir`` is
+    atomic on every filesystem this is used on (local disks, NFS, GPFS,
+    Lustre), whereas cross-node ``flock`` depends on mount options.
+
+    Breaking a stale lock is not race-free: if two waiters both see the
+    same stale lock, the slower one can remove the lock the faster one
+    has just taken. This needs a lock to go unreleased for
+    `stale_after` seconds first (a killed job), so it is accepted as
+    rare.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            lock_path.mkdir()
+            break
+        except FileExistsError:
+            if _break_if_stale(lock_path, stale_after):
+                continue
+            if time.monotonic() >= deadline:
+                raise LockTimeoutError(
+                        f"could not acquire lock {str(lock_path)!r} "
+                        f"within {timeout:g}s",
+                        ) from None
+            time.sleep(poll_interval)
+    try:
+        yield
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            lock_path.rmdir()

@@ -219,3 +219,49 @@ def test_missing_root_outside_git_repo_errors(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "not inside a git working tree" in result.stderr
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_run_keeps_child_exit_code_when_record_fails(git_repo: Path) -> None:
+    """`run` returns the child's exit code even if recording fails (the
+    log file's parent is a regular file), warning instead of crashing."""
+    blocker = git_repo / "not_a_dir"
+    blocker.write_text("")
+
+    result = run_cli(
+            [
+                    "run", "--id", "s1", "--order", "0",
+                    "--root", str(git_repo),
+                    "--log-file", str(blocker / "RUN_LOG.md"),
+                    "--", "python3", "-c", "import sys; sys.exit(5)",
+                    ],
+            cwd=git_repo,
+            )
+
+    assert result.returncode == 5
+    assert "Traceback" not in result.stderr
+    assert "'s1' finished with exit code 5" in result.stderr
+    assert "NOT recorded" in result.stderr
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_record_failure_exits_nonzero_with_error(git_repo: Path) -> None:
+    """`record` itself reports a failed write as a clean error, exit 1."""
+    blocker = git_repo / "not_a_dir"
+    blocker.write_text("")
+
+    result = run_cli(
+            [
+                    "record", "--id", "s1", "--order", "0",
+                    "--root", str(git_repo),
+                    "--log-file", str(blocker / "RUN_LOG.md"),
+                    "--text", "hello",
+                    ],
+            cwd=git_repo,
+            )
+
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert "[ERROR]" in result.stderr
+    assert "NOT recorded" in result.stderr
+    assert "own results are unaffected" in result.stderr

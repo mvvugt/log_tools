@@ -167,11 +167,19 @@ def main() -> None:
             output = "\n".join(
                     filter_matching_lines(output, args.include_pattern),
                     )
-        record(
-                log_file=log_file, script_id=args.script_id,
-                order=args.order, output=output, root=root,
-                failed=args.failed,
-                )
+        try:
+            record(
+                    log_file=log_file, script_id=args.script_id,
+                    order=args.order, output=output, root=root,
+                    failed=args.failed,
+                    )
+        except Exception as exc:
+            logging.getLogger(__name__).error(
+                    "run of %r was NOT recorded in %s: %s. %s",
+                    args.script_id, log_file, exc,
+                    Constants.RECORD_FAILED_NOTE,
+                    )
+            sys.exit(1)
 
 
 if __name__ == "__main__":

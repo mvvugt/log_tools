@@ -1,8 +1,12 @@
 """Unit tests for `log_tools.runlog`."""
 from __future__ import annotations
 
+import multiprocessing
 from pathlib import Path
 
+import pytest
+
+from log_tools.functions import LockTimeoutError
 from log_tools.runlog import (
     Constants,
     Entry,
@@ -817,3 +821,112 @@ def test_run_and_record_cleans_up_temp_record_file(git_repo: Path) -> None:
             ]
     assert printed_path, "expected the record file path to be printed"
     assert not Path(printed_path[0]).exists()
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# record() locking (concurrent writers sharing one RUN_LOG.md)
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+_N_WRITERS = 8
+_RECORDS_PER_WRITER = 5
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def _concurrent_writer(
+        log_file: str, root: str, index: int,
+        barrier: multiprocessing.synchronize.Barrier,
+        ) -> None:
+    """Wait for all writers, then `record()` one id several times."""
+    barrier.wait()
+    for run in range(_RECORDS_PER_WRITER):
+        record(
+                log_file=Path(log_file), script_id=f"task{index}",
+                order=index, output=f"task {index} run {run}",
+                root=Path(root),
+                )
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_record_concurrent_processes_keep_every_entry(git_repo: Path) -> None:
+    """N processes recording into one RUN_LOG.md at once (SLURM/SGE array
+    tasks on one node) raise nothing and lose no entry; no temp or lock
+    files are left behind."""
+    log_file = git_repo / "RUN_LOG.md"
+    ctx = multiprocessing.get_context("spawn")
+    barrier = ctx.Barrier(_N_WRITERS)
+    procs = [
+            ctx.Process(
+                    target=_concurrent_writer,
+                    args=(str(log_file), str(git_repo), i, barrier),
+                    )
+            for i in range(_N_WRITERS)
+            ]
+    for proc in procs:
+        proc.start()
+    for proc in procs:
+        proc.join(timeout=120)
+
+    assert [proc.exitcode for proc in procs] == [0] * _N_WRITERS
+    entries = parse_log(log_file)
+    assert sorted(entries) == sorted(f"task{i}" for i in range(_N_WRITERS))
+    for i in range(_N_WRITERS):
+        last = _RECORDS_PER_WRITER - 1
+        assert entries[f"task{i}"].output == f"task {i} run {last}"
+    assert list(git_repo.glob(".RUN_LOG.md.*.tmp")) == []
+    assert not (git_repo / "RUN_LOG.md.lock").exists()
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_record_lock_timeout_raises_and_leaves_log_unchanged(
+        git_repo: Path, monkeypatch: pytest.MonkeyPatch,
+        ) -> None:
+    """With the lock held by another (live) writer, `record()` gives up
+    after the timeout with `LockTimeoutError` and does not write."""
+    log_file = git_repo / "RUN_LOG.md"
+    record(
+            log_file=log_file, script_id="s1", order=0, output="first",
+            root=git_repo,
+            )
+    before = log_file.read_text()
+    (git_repo / "RUN_LOG.md.lock").mkdir()
+    monkeypatch.setattr(Constants, "RECORD_LOCK_TIMEOUT_SECONDS", 0.2)
+
+    with pytest.raises(LockTimeoutError):
+        record(
+                log_file=log_file, script_id="s2", order=1, output="second",
+                root=git_repo,
+                )
+
+    assert log_file.read_text() == before
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_run_and_record_keeps_child_exit_code_when_record_fails(
+        git_repo: Path, monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        caplog: pytest.LogCaptureFixture,
+        ) -> None:
+    """A failing record (here: lock timeout) only warns; the wrapped
+    command's own exit code is still returned.
+
+    Notes
+    -----
+    Checks stderr *and* `caplog`: once `log_tools.emitter` has configured
+    the ``log_tools`` logger (``propagate=False``, e.g. by an earlier
+    test), the warning goes to stderr via the emitter's handler instead
+    of reaching pytest's root-logger capture.
+    """
+    log_file = git_repo / "RUN_LOG.md"
+    (git_repo / "RUN_LOG.md.lock").mkdir()
+    monkeypatch.setattr(Constants, "RECORD_LOCK_TIMEOUT_SECONDS", 0.2)
+
+    returncode = run_and_record(
+            log_file=log_file, script_id="s1", order=0, root=git_repo,
+            command=["python3", "-c", "import sys; sys.exit(4)"],
+            )
+
+    assert returncode == 4
+    assert not log_file.exists()
+    seen = capsys.readouterr().err + caplog.text
+    assert "'s1' finished with exit code 4" in seen
+    assert "NOT recorded" in seen
+    assert "own results are unaffected" in seen

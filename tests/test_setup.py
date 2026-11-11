@@ -204,10 +204,8 @@ def test_concurrent_siblings_do_not_lose_an_order_update(
     This targets `resolve_order`'s own `mkdir`-lock-guarded state file in
     isolation (via a tiny script that only calls it and prints the
     result), rather than running full step scripts that also call
-    `record()` -- concurrent `record()` calls race on `RUN_LOG.md`
-    itself via a separate, pre-existing limitation in
-    `log_tools.functions.atomic_write` (its fixed `.tmp` sibling name is
-    not unique per writer), which is outside this feature's scope.
+    `record()` -- concurrent `record()` locking is covered separately in
+    `tests.test_runlog`.
     """
     from log_tools.setup import Constants
 
@@ -380,3 +378,30 @@ def test_non_integer_runlog_order_raises(git_repo: Path) -> None:
     assert result.returncode != 0
     assert "ValueError" in result.stderr
     assert "RUNLOG_ORDER" in result.stderr
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_record_failure_only_warns_and_keeps_exit_status(
+        git_repo: Path,
+        ) -> None:
+    """If recording fails at teardown (here: the log file's parent is a
+    regular file, so nothing can be written), the script's own exit
+    status is unchanged and a warning goes to stderr."""
+    blocker = git_repo / "not_a_dir"
+    blocker.write_text("")
+    for code in (0, 3):
+        name = _unique_step_name(f"record_fails_{code}")
+        script = _write_step_script(
+                git_repo, name, f"import sys\nsys.exit({code})",
+                )
+
+        result = _run_step(
+                script, cwd=git_repo,
+                env_extra={"RUNLOG_LOG_FILE": str(blocker / "RUN_LOG.md")},
+                )
+
+        assert result.returncode == code, result.stderr
+        assert "Traceback" not in result.stderr
+        assert f"finished with exit code {code}" in result.stderr
+        assert "NOT recorded" in result.stderr
+        assert "own results are unaffected" in result.stderr

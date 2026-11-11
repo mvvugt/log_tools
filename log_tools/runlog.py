@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from log_tools.functions import atomic_write, get_git_info
+from log_tools.functions import atomic_write, file_lock, get_git_info
 
 _log = logging.getLogger(__name__)
 
@@ -63,6 +63,24 @@ class Constants:
     DEFAULT_STAGE_KEY: str = ""
     """`split_stages` key for content before the first marker, or the
     whole output when there are no markers at all."""
+    LOCK_SUFFIX: str = ".lock"
+    """Appended to the log file's name for `record()`'s lock dir."""
+    RECORD_LOCK_TIMEOUT_SECONDS: float = 30.0
+    """How long `record()` waits for a concurrent writer's lock."""
+    RECORD_LOCK_STALE_SECONDS: float = 120.0
+    """Age after which `record()` breaks an abandoned lock."""
+    RECORD_FAILED_NOTE: str = (
+            "Only the log entry is missing; the script's own results are "
+            "unaffected."
+            )
+    """Appended to every record-failure message, so it is not mistaken
+    for the script itself having failed."""
+    RECORD_FAILED_AFTER_RUN_MSG: str = (
+            "%r finished with exit code %d, but its run was NOT recorded "
+            "in %s: %s. " + RECORD_FAILED_NOTE
+            )
+    """`%`-style warning when a wrapped script ran but `record()` failed;
+    args: script id, exit code, log file, reason."""
 
 
 _EMITTER_TIMESTAMP_RE = re.compile(Constants.EMITTER_TIMESTAMP_PATTERN)
@@ -520,10 +538,19 @@ def record(
         If `True`, skip computing/rendering a diff against the previous
         run -- a diff is noise on a failed run.
 
+    Raises
+    ------
+    LockTimeoutError
+        If another writer holds the lock for longer than
+        `Constants.RECORD_LOCK_TIMEOUT_SECONDS`; nothing is written.
+
     Notes
     -----
     Writes are atomic (see `log_tools.functions.atomic_write`), so a crash
-    mid-write cannot corrupt the log. If the previous run for this id had
+    mid-write cannot corrupt the log. The whole read-modify-write runs
+    under `log_tools.functions.file_lock` (``<log_file>.lock``), so
+    concurrent writers (e.g. array tasks sharing one log) never lose each
+    other's entries. If the previous run for this id had
     failed and this one succeeds, and the previous run's output contains
     `Constants.ERROR_TAIL_DIVIDER`, that tail is stripped before diffing
     and a "- error resolved" note is shown instead of a raw diff of its
@@ -540,56 +567,65 @@ def record(
     given `script_id`, and preserved unchanged on every subsequent call
     -- including after a failed run.
     """
-    entries = parse_log(log_file)
-    commit, dirty = get_git_info(root)
-    previous = entries.get(script_id)
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = log_file.with_name(log_file.name + Constants.LOCK_SUFFIX)
+    with file_lock(
+            lock_path, timeout=Constants.RECORD_LOCK_TIMEOUT_SECONDS,
+            stale_after=Constants.RECORD_LOCK_STALE_SECONDS,
+            ):
+        entries = parse_log(log_file)
+        commit, dirty = get_git_info(root)
+        previous = entries.get(script_id)
 
-    diff_parts: list[str] = []
-    resolved_note = False
-    if not failed and previous is not None:
-        old_for_diff = previous.output
-        if previous.failed and Constants.ERROR_TAIL_DIVIDER in previous.output:
-            resolved_note = True
-            old_for_diff, _, _tail = previous.output.partition(
-                    Constants.ERROR_TAIL_DIVIDER,
+        diff_parts: list[str] = []
+        resolved_note = False
+        if not failed and previous is not None:
+            old_for_diff = previous.output
+            if (
+                    previous.failed
+                    and Constants.ERROR_TAIL_DIVIDER in previous.output
+                    ):
+                resolved_note = True
+                old_for_diff, _, _tail = previous.output.partition(
+                        Constants.ERROR_TAIL_DIVIDER,
+                        )
+                old_for_diff = old_for_diff.rstrip("\n")
+
+            diff_parts = _stage_diff_blocks(
+                    split_stages(old_for_diff), split_stages(output),
                     )
-            old_for_diff = old_for_diff.rstrip("\n")
+            if diff_parts:
+                _log.info(
+                        "changes vs previous run of %r:\n%s", script_id,
+                        "\n".join(diff_parts),
+                        )
+            elif resolved_note:
+                _log.info("error resolved vs previous run of %r", script_id)
+            else:
+                _log.info("no change vs previous run of %r", script_id)
 
-        diff_parts = _stage_diff_blocks(
-                split_stages(old_for_diff), split_stages(output),
+        diff_block = None
+        if (diff_parts or resolved_note) and previous is not None:
+            prev_dirty_note = " (dirty)" if previous.dirty else ""
+            parts = [
+                    f"Δ vs previous run (was `{previous.commit}`"
+                    f"{prev_dirty_note}):",
+                    ]
+            if resolved_note:
+                parts.append("- error resolved")
+            parts.extend(diff_parts)
+            diff_block = "\n".join(parts)
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        first_run = previous.first_run if previous is not None else now
+
+        entries[script_id] = Entry(
+                script_id=script_id, order=order, timestamp=now,
+                first_run=first_run, commit=commit, dirty=dirty, label=label,
+                output=output, diff=diff_block, failed=failed,
                 )
-        if diff_parts:
-            _log.info(
-                    "changes vs previous run of %r:\n%s", script_id,
-                    "\n".join(diff_parts),
-                    )
-        elif resolved_note:
-            _log.info("error resolved vs previous run of %r", script_id)
-        else:
-            _log.info("no change vs previous run of %r", script_id)
 
-    diff_block = None
-    if (diff_parts or resolved_note) and previous is not None:
-        prev_dirty_note = " (dirty)" if previous.dirty else ""
-        parts = [
-                f"Δ vs previous run (was `{previous.commit}`"
-                f"{prev_dirty_note}):",
-                ]
-        if resolved_note:
-            parts.append("- error resolved")
-        parts.extend(diff_parts)
-        diff_block = "\n".join(parts)
-
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    first_run = previous.first_run if previous is not None else now
-
-    entries[script_id] = Entry(
-            script_id=script_id, order=order, timestamp=now,
-            first_run=first_run, commit=commit, dirty=dirty, label=label,
-            output=output, diff=diff_block, failed=failed,
-            )
-
-    atomic_write(log_file, render_log(entries))
+        atomic_write(log_file, render_log(entries))
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -623,7 +659,9 @@ def run_and_record(
     -------
     returncode : `int`
         The wrapped command's exit code, unchanged, so callers (e.g. a
-        ``set -eo pipefail`` bash script) still see failures.
+        ``set -eo pipefail`` bash script) still see failures. A failure
+        to record (e.g. `LockTimeoutError`) is logged as a warning and
+        never changes it.
 
     Notes
     -----
@@ -664,8 +702,17 @@ def run_and_record(
             failed=failed,
             )
 
-    record(
-            log_file=log_file, script_id=script_id, order=order,
-            output=output, root=root, label=" ".join(command), failed=failed,
-            )
+    try:
+        record(
+                log_file=log_file, script_id=script_id, order=order,
+                output=output, root=root, label=" ".join(command),
+                failed=failed,
+                )
+    except Exception as exc:
+        # A logging failure must not change the wrapped command's result
+        # (e.g. cancel a SLURM `afterok` dependency): warn only.
+        _log.warning(
+                Constants.RECORD_FAILED_AFTER_RUN_MSG, script_id,
+                proc.returncode, log_file, exc,
+                )
     return proc.returncode

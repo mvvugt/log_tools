@@ -21,7 +21,6 @@ restarts, which doubles as the only cleanup mechanism (no reaper needed).
 """
 from __future__ import annotations
 
-import contextlib
 import logging
 import os
 import sys
@@ -31,7 +30,12 @@ import traceback
 from pathlib import Path
 from types import TracebackType
 
-from log_tools.functions import atomic_write, resolve_git_root
+from log_tools.functions import (
+    LockTimeoutError,
+    atomic_write,
+    file_lock,
+    resolve_git_root,
+)
 from log_tools.runlog import Constants as RunlogConstants
 from log_tools.runlog import build_recorded_output, record
 
@@ -46,8 +50,8 @@ class Constants:
     ORDER_LOCK_DIRNAME_TEMPLATE: str = "runlog-order-{ppid}.lock"
     ORDER_STEP: int = 10
     ORDER_STATE_TTL_SECONDS: float = 86400.0
-    LOCK_RETRY_INTERVAL_SECONDS: float = 0.05
-    LOCK_MAX_TRIES: int = 200
+    LOCK_TIMEOUT_SECONDS: float = 10.0
+    LOCK_STALE_SECONDS: float = 120.0
     LOG_FILE_ENV_VAR: str = "RUNLOG_LOG_FILE"
     ROOT_ENV_VAR: str = "RUNLOG_ROOT"
     SCRIPT_ID_ENV_VAR: str = "RUNLOG_SCRIPT_ID"
@@ -96,38 +100,6 @@ def _order_lock_path(ppid: int) -> Path:
     """Return the order-state lock directory path for run id `ppid`."""
     name = Constants.ORDER_LOCK_DIRNAME_TEMPLATE.format(ppid=ppid)
     return Path(tempfile.gettempdir()) / name
-
-
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-def _acquire_lock(lock_path: Path) -> bool:
-    """Acquire `lock_path` via atomic `mkdir`, retrying briefly.
-
-    Returns
-    -------
-    acquired : `bool`
-        `True` if the lock was acquired. `False` if `Constants.
-        LOCK_MAX_TRIES` was exceeded, in which case the caller proceeds
-        unlocked (fail open, rather than hanging a pipeline forever) and
-        a warning is logged.
-    """
-    for _ in range(Constants.LOCK_MAX_TRIES):
-        try:
-            lock_path.mkdir()
-            return True
-        except FileExistsError:
-            time.sleep(Constants.LOCK_RETRY_INTERVAL_SECONDS)
-    _log.warning(
-            "could not acquire order-state lock %r; proceeding unlocked",
-            str(lock_path),
-            )
-    return False
-
-
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-def _release_lock(lock_path: Path) -> None:
-    """Release a lock acquired via `_acquire_lock`, ignoring absence."""
-    with contextlib.suppress(OSError):
-        lock_path.rmdir()
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -188,31 +160,94 @@ def resolve_order(ppid: int, script_id: str) -> int:
 
     Notes
     -----
-    Guarded by an `mkdir`-based advisory lock around the state file's
+    Guarded by `log_tools.functions.file_lock` around the state file's
     read-modify-write, so concurrent sibling registrations don't lose an
-    update -- see `_acquire_lock`.
+    update. If the lock cannot be acquired within
+    `Constants.LOCK_TIMEOUT_SECONDS`, it warns and proceeds unlocked
+    (fail open) rather than hanging the pipeline.
     """
     state_path = _order_state_path(ppid)
     lock_path = _order_lock_path(ppid)
-    _acquire_lock(lock_path)
     try:
-        state = (
-                _parse_state(state_path.read_text())
-                if state_path.is_file() else {}
+        with file_lock(
+                lock_path, timeout=Constants.LOCK_TIMEOUT_SECONDS,
+                stale_after=Constants.LOCK_STALE_SECONDS,
+                ):
+            return _next_order(state_path, script_id)
+    except LockTimeoutError:
+        # Fail open: an order collision is better than hanging a pipeline.
+        _log.warning(
+                "could not acquire order-state lock %r; proceeding unlocked",
+                str(lock_path),
                 )
-        if not state or _is_stale(state):
-            state = _fresh_state()
+        return _next_order(state_path, script_id)
 
-        if script_id in state:
-            return int(state[script_id])
 
-        order = int(state["NEXT_ORDER"])
-        state[script_id] = str(order)
-        state["NEXT_ORDER"] = str(order + Constants.ORDER_STEP)
-        atomic_write(state_path, _serialize_state(state))
-        return order
-    finally:
-        _release_lock(lock_path)
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def _next_order(state_path: Path, script_id: str) -> int:
+    """Read-modify-write the order-state file for one registration.
+
+    Parameters
+    ----------
+    state_path : `Path`
+        The run's order-state file.
+    script_id : `str`
+        The registering script's id.
+
+    Returns
+    -------
+    order : `int`
+        `script_id`'s existing order, or a freshly assigned one.
+
+    Notes
+    -----
+    Not locked itself -- `resolve_order` holds the lock around it.
+    """
+    state = (
+            _parse_state(state_path.read_text())
+            if state_path.is_file() else {}
+            )
+    if not state or _is_stale(state):
+        state = _fresh_state()
+
+    if script_id in state:
+        return int(state[script_id])
+
+    order = int(state["NEXT_ORDER"])
+    state[script_id] = str(order)
+    state["NEXT_ORDER"] = str(order + Constants.ORDER_STEP)
+    atomic_write(state_path, _serialize_state(state))
+    return order
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def _exit_status(
+        exc_type: type[BaseException] | None, exc_val: BaseException | None,
+        ) -> int:
+    """Return the exit status a script leaving a `with` block will have.
+
+    Parameters
+    ----------
+    exc_type : `type[BaseException]` or `None`
+        The exception type leaving the block, if any.
+    exc_val : `BaseException` or `None`
+        The exception instance leaving the block, if any.
+
+    Returns
+    -------
+    status : `int`
+        ``0`` for a clean exit or ``sys.exit()``/``sys.exit(0)``; the
+        integer code for ``sys.exit(N)``; ``1`` for any other exception or
+        a non-integer ``sys.exit`` argument (Python's own behaviour).
+    """
+    if exc_type is None:
+        return 0
+    if exc_type is SystemExit:
+        code = getattr(exc_val, "code", None)
+        if code is None:
+            return 0
+        return code if isinstance(code, int) else 1
+    return 1
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -392,11 +427,20 @@ class RunlogSetup:
                 raw_on_failure=self._raw_on_failure, failed=failed,
                 )
 
-        record(
-                log_file=self.log_file, script_id=self.script_id,
-                order=self.order, output=output, root=self.root,
-                label=" ".join(sys.argv), failed=failed,
-                )
+        try:
+            record(
+                    log_file=self.log_file, script_id=self.script_id,
+                    order=self.order, output=output, root=self.root,
+                    label=" ".join(sys.argv), failed=failed,
+                    )
+        except Exception as exc:
+            # A logging failure must not change the script's own exit
+            # status (e.g. cancel a SLURM `afterok` dependency): warn only.
+            _log.warning(
+                    RunlogConstants.RECORD_FAILED_AFTER_RUN_MSG,
+                    self.script_id, _exit_status(exc_type, exc_val),
+                    self.log_file, exc,
+                    )
 
         self._record_path.unlink(missing_ok=True)
         if self._prev_record_env is None:

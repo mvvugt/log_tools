@@ -3,10 +3,18 @@ from __future__ import annotations
 
 import os
 import stat
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from log_tools.functions import atomic_write, get_git_info
+import pytest
+
+from log_tools.functions import (
+    LockTimeoutError,
+    atomic_write,
+    file_lock,
+    get_git_info,
+)
 
 from .conftest import commit_hash, make_dirty, make_non_script_dirty
 
@@ -142,3 +150,78 @@ def test_atomic_write_new_file_follows_umask(tmp_path: Path) -> None:
         os.umask(old_umask)
 
     assert stat.S_IMODE(target.stat().st_mode) == 0o644
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_file_lock_holds_dir_and_releases(tmp_path: Path) -> None:
+    """The lock dir exists inside the block and is removed afterwards."""
+    lock = tmp_path / "RUN_LOG.md.lock"
+
+    with file_lock(lock, timeout=1.0, stale_after=60.0):
+        assert lock.is_dir()
+
+    assert not lock.exists()
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_file_lock_released_when_body_raises(tmp_path: Path) -> None:
+    """An exception inside the block still removes the lock dir."""
+    lock = tmp_path / "RUN_LOG.md.lock"
+
+    with pytest.raises(ValueError):
+        with file_lock(lock, timeout=1.0, stale_after=60.0):
+            raise ValueError("boom")
+
+    assert not lock.exists()
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_file_lock_times_out_when_held(tmp_path: Path) -> None:
+    """A fresh lock held by someone else raises `LockTimeoutError` after
+    `timeout`, and the other holder's lock dir is left alone."""
+    lock = tmp_path / "RUN_LOG.md.lock"
+    lock.mkdir()
+
+    start = time.monotonic()
+    with pytest.raises(LockTimeoutError):
+        with file_lock(lock, timeout=0.3, stale_after=60.0):
+            pass  # pragma: no cover - must not be reached
+
+    assert time.monotonic() - start >= 0.3
+    assert lock.is_dir()
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_file_lock_breaks_stale_lock(tmp_path: Path) -> None:
+    """A lock dir older than `stale_after` (left by a killed job) is
+    broken and acquired instead of waiting for the timeout."""
+    lock = tmp_path / "RUN_LOG.md.lock"
+    lock.mkdir()
+    old = time.time() - 600
+    os.utime(lock, (old, old))
+
+    with file_lock(lock, timeout=5.0, stale_after=120.0):
+        assert lock.is_dir()
+        assert lock.stat().st_mtime > old
+
+    assert not lock.exists()
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_file_lock_serialises_threads(tmp_path: Path) -> None:
+    """Concurrent holders never overlap inside the locked block."""
+    lock = tmp_path / "RUN_LOG.md.lock"
+    counter = tmp_path / "counter.txt"
+    counter.write_text("0")
+
+    def _increment(_: int) -> None:
+        """Read-modify-write `counter` under the lock."""
+        with file_lock(lock, timeout=10.0, stale_after=60.0):
+            value = int(counter.read_text())
+            time.sleep(0.001)
+            counter.write_text(str(value + 1))
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(_increment, range(40)))
+
+    assert counter.read_text() == "40"
