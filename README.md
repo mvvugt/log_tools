@@ -19,58 +19,19 @@ documentation).
 
 
 ## Installation instructions
-At present, `log_tools` is undergoing development and no packages exist yet on
-PyPi. Installation is outlined here.
+`log_tools` is on [PyPI](https://pypi.org/project/log-tools/) and has no
+runtime dependencies:
+```
+python -m pip install log_tools
+```
 
 Please keep in mind that development is primarily carried out on macOS
 with Python v3.13, and testing is additionally carried out on Linux (HPC
-clusters, and the CI pipeline's Docker container) across Python 3.9-3.13.
+clusters, and the CI pipeline's Docker containers) across Python 3.9-3.14.
 
-To install `log_tools`, please use the git repo:
-```
-git clone git@gitlab.com:mvvugt/log_tools.git
-cd log_tools
-```
+To install from a git checkout instead (e.g. for development), see
+[Development](#development) below.
 
-### Dependency installation
-
-#### Using pip
-You can install the dependencies using pip from the root of the cloned
-repository:
-```
-python -m pip install --upgrade -r requirements.txt
-```
-
-#### Using Conda
-There are also conda yaml environment files in `./resources/conda` that
-have the same contents as `requirements.txt` but for conda packages, so all the
-pre-requisites.
-
-A new conda environment can be built using the command:
-```
-conda env create --file ./resources/conda/conda_create.yaml
-# activate environment for package installation
-conda activate log_tools
-```
-
-To add to an existing environment use:
-```
-conda activate <env_name>
-conda env update --file ./resources/conda/conda_update.yaml
-```
-
-### Package installation
-Next the package can be installed:
-```
-make install
-```
-
-`make` is just a wrapper, you can also use:
-```
-python -m pip install .
-```
-
-For an editable (developer) install, see [Development](#development) below.
 
 ### Bash-specific installation
 The steps above install `runlog`, `runlog-emitter-path`, and
@@ -214,6 +175,51 @@ runlog run --id third_party_tool --order 40 --root "$ROOT" \
 ```
 
 ## Development
+To install from source, clone the git repo:
+```
+git clone git@gitlab.com:mvvugt/log_tools.git
+cd log_tools
+```
+
+### Dependency installation
+
+#### Using pip
+You can install the dependencies using pip from the root of the cloned
+repository:
+```
+python -m pip install --upgrade -r requirements.txt
+```
+
+#### Using Conda
+There are also conda yaml environment files in `./resources/conda` that
+have the same contents as `requirements.txt` but for conda packages, so all the
+pre-requisites.
+
+A new conda environment can be built using the command:
+```
+conda env create --file ./resources/conda/conda_create.yaml
+# activate environment for package installation
+conda activate log_tools
+```
+
+To add to an existing environment use:
+```
+conda activate <env_name>
+conda env update --file ./resources/conda/conda_update.yaml
+```
+
+### Package installation from source
+Next the package can be installed:
+```
+make install
+```
+
+`make` is just a wrapper, you can also use:
+```
+python -m pip install .
+```
+
+### Editable install
 For development work, install the package in editable mode with Git commit
 hooks configured.
 
@@ -277,9 +283,9 @@ python .setup_git_hooks.py
 
 ## Change log
 
-See `CHANGELOG.md` for the full history. Latest (`[Unreleased]`):
+See `CHANGELOG.md` for the full history. Latest (`[0.1.0]`):
 
-#### version `Unreleased`
+#### version `0.1.0`
 
 * BUILD - Convert single-file `runlog.py` script into an installable `log_tools` package with a `runlog` console-script entry point.
 * REFACTOR - Split `runlog.py` into `log_tools/functions.py` (shared functions), `log_tools/runlog.py` (specific functions), and `log_tools/cli/runlog.py` (thin argparse CLI wrapper).

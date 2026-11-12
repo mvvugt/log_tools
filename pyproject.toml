@@ -7,7 +7,7 @@ name = "log_tools"
 dynamic = ["version"]
 description = "Record per-script run output into one compact, project-wide Markdown log."
 readme = "README.md"
-requires-python = ">=3.9,<3.14"
+requires-python = ">=3.9"
 license = "MIT"
 license-files = ["LICENSE.txt"]
 authors = [
@@ -20,13 +20,15 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Operating System :: OS Independent",
     "Development Status :: 3 - Alpha",
 ]
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest", "ruff", "bump2version", "build", "twine", "sphinx"]
+dev = ["pytest", "ruff", "bump2version", "build", "twine", "sphinx",
+       "pyyaml"]
 
 [project.urls]
 Repository = "https://gitlab.com/mvvugt/log_tools"
