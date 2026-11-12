@@ -19,10 +19,11 @@ documentation).
 
 
 ## Installation instructions
-`log_tools` is on [PyPI](https://pypi.org/project/log-tools/) and has no
+`log_tools` is on [PyPI](https://pypi.org/project/runlog-tools/) as
+`runlog-tools` and has no
 runtime dependencies:
 ```
-python -m pip install log_tools
+python -m pip install runlog-tools
 ```
 
 Please keep in mind that development is primarily carried out on macOS

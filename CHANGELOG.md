@@ -39,7 +39,7 @@
 * FIX - `log_tools/setup.sh`'s teardown only warns when `runlog record` fails (naming the exit code; only the log entry is missing), so a logging failure no longer turns the script's exit status into 1 under `set -e`.
 * FIX - `log_tools/setup.sh`'s order-state lock now times out after 10 s and breaks stale locks (> 120 s), no longer removes a lock it failed to acquire, and prints its full "proceeding unlocked" warning without recording it (the message was cut off and recorded before).
 * TEST - Set `RUNLOG_TEST_BASH=/path/to/bash` to also run the `setup.sh` strict-mode, teardown and lock tests under another bash, e.g. the system bash 4.2 on Myriad.
-* BUILD - Publish to PyPI (`pip install log_tools`); add `resources/pypi/` upload scripts for TestPyPI and PyPI (clean build, version check, `twine check`, upload).
+* BUILD - Publish to PyPI as `runlog-tools` (`pip install runlog-tools`; the import name stays `log_tools`); add `resources/pypi/` upload scripts for TestPyPI and PyPI (clean build, version check, `twine check`, upload).
 * BUILD - Support Python 3.14: drop the `<3.14` cap from `requires-python`, add the 3.14 classifier, and run the CI `test` matrix on every supported version (3.9-3.14).
 * BUILD - Run CI pipelines only for merge requests into the default branch, tags, and the default branch (`workflow: rules:` in `.gitlab-ci.yml`).
 * BUILD - Add `pyyaml`, `setuptools>=77` and `wheel` to the `dev` extras and the conda environment files (the packaging test builds with `--no-isolation`, and slim Python images ship neither build backend).

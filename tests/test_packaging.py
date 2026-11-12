@@ -96,13 +96,14 @@ def test_wheel_ships_shell_files(dist_dir: Path) -> None:
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 def test_wheel_version_matches_version_file(dist_dir: Path) -> None:
-    """The wheel's METADATA version equals the repo's `VERSION` file."""
+    """The wheel's METADATA name is `runlog-tools`, version is `VERSION`."""
     expected = (REPO_ROOT / "VERSION").read_text().strip()
     with zipfile.ZipFile(_one(dist_dir, "*.whl")) as whl:
         meta_name = next(n for n in whl.namelist()
                          if n.endswith(".dist-info/METADATA"))
         meta = Parser().parsestr(whl.read(meta_name).decode())
 
+    assert meta["Name"] == "runlog-tools"
     assert meta["Version"] == expected
     assert meta["Requires-Python"] == ">=3.9"
     assert "Programming Language :: Python :: 3.14" in meta.get_all(
@@ -117,7 +118,7 @@ def test_wheel_has_no_private_or_test_files(dist_dir: Path) -> None:
            if n.startswith(PRIVATE_PREFIXES + ("tests/",))]
 
     assert bad == []
-    assert all(n.startswith(("log_tools/", "log_tools-")) for n in names)
+    assert all(n.startswith(("log_tools/", "runlog_tools-")) for n in names)
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
