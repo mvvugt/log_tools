@@ -6,7 +6,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOCKERFILE_HASH="$(sha256sum "${SCRIPT_DIR}/Dockerfile" | cut -d' ' -f1)"
 
+# GitLab.com runners are amd64; pin it so Apple Silicon builds match
 docker build \
+    --platform linux/amd64 \
     --label "dockerfile_hash=${DOCKERFILE_HASH}" \
     -t mvanvugt/log_tools:master \
     "${SCRIPT_DIR}"

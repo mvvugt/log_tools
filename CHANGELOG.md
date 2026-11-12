@@ -2,6 +2,8 @@
 
 ### [Unreleased]
 
+* BUILD - Build and run the CI image as `linux/amd64` (`--platform`) so images built on Apple Silicon run on GitLab runners.
+
 ### [0.1.0] - 2026-11-12
 
 * BUILD - Convert single-file `runlog.py` script into an installable `log_tools` package with a `runlog` console-script entry point.
