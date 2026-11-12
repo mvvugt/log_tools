@@ -43,7 +43,7 @@ TMP_CHECKOUT="$(cd "${TMP_CHECKOUT}" && pwd -P)"
 # archive` -- uncommitted changes in REPO_ROOT still can't leak in.
 git clone --quiet --local "${REPO_ROOT}" "${TMP_CHECKOUT}"
 
-docker run --rm -it \
+docker run --rm -it --platform linux/amd64 \
     -v "${TMP_CHECKOUT}:/workspace" \
     -w /workspace \
     "${IMAGE}" \
