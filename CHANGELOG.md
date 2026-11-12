@@ -42,6 +42,7 @@
 * BUILD - Publish to PyPI (`pip install log_tools`); add `resources/pypi/` upload scripts for TestPyPI and PyPI (clean build, version check, `twine check`, upload).
 * BUILD - Support Python 3.14: drop the `<3.14` cap from `requires-python`, add the 3.14 classifier, and run the CI `test` matrix on every supported version (3.9-3.14).
 * BUILD - Run CI pipelines only for merge requests into the default branch, tags, and the default branch (`workflow: rules:` in `.gitlab-ci.yml`).
-* BUILD - Add `pyyaml`, `setuptools>=61` and `wheel` to the `dev` extras and the conda environment files (the packaging test builds with `--no-isolation`, and slim Python images ship neither build backend).
+* BUILD - Add `pyyaml`, `setuptools>=77` and `wheel` to the `dev` extras and the conda environment files (the packaging test builds with `--no-isolation`, and slim Python images ship neither build backend).
+* FIX - Raise the `[build-system]` floor to `setuptools>=77`, the first version that supports the SPDX `license = "MIT"` string with `license-files`.
 * DOCS - README installation now uses PyPI; installing from a git checkout moved to the Development section.
 * TEST - Add `tests/test_ci.py` (CI triggers and Python matrix) and `tests/test_packaging.py` (builds the sdist and wheel; checks shell files, version, and that no private or test files are shipped) and `tests/test_pypi_scripts.py` (upload scripts against a stub `python`).

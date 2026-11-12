@@ -10,5 +10,5 @@ dependencies:
   - twine
   - sphinx
   - pyyaml
-  - setuptools>=61
+  - setuptools>=77
   - wheel

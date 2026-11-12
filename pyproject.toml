@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -28,7 +28,7 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff", "bump2version", "build", "twine", "sphinx",
-       "pyyaml", "setuptools>=61", "wheel"]
+       "pyyaml", "setuptools>=77", "wheel"]
 
 [project.urls]
 Repository = "https://gitlab.com/mvvugt/log_tools"

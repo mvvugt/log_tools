@@ -285,7 +285,7 @@ python .setup_git_hooks.py
 
 See `CHANGELOG.md` for the full history. Latest (`[0.1.0]`):
 
-#### version `0.1.0`
+### version `0.1.0`
 
 * BUILD - Convert single-file `runlog.py` script into an installable `log_tools` package with a `runlog` console-script entry point.
 * REFACTOR - Split `runlog.py` into `log_tools/functions.py` (shared functions), `log_tools/runlog.py` (specific functions), and `log_tools/cli/runlog.py` (thin argparse CLI wrapper).
