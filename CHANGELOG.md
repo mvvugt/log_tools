@@ -2,6 +2,8 @@
 
 ### [Unreleased]
 
+### [0.1.1] - 2026-11-12
+
 * BUILD - Build and run the CI image as `linux/amd64` (`--platform`) so images built on Apple Silicon run on GitLab runners.
 * FIX - `log_tools.__version__` (and `runlog --version`, the docs release) looks up the `runlog-tools` distribution, not `log_tools`, so a clean PyPI install no longer reports `0.0.0+unknown`.
 * FIX - Escape the Jinja braces in `.bumpversion.cfg`'s `resources/conda/meta.yaml` pattern; `bump2version` crashed with `ValueError: unexpected '{' in field name`.
