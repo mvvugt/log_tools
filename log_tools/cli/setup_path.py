@@ -3,7 +3,7 @@ Command-line entry point for `runlog-setup-path`.
 
 Prints the absolute path to the installed `log_tools/setup.sh`, so a
 Bash script can do ``source "$(runlog-setup-path)"`` after
-`pip install log_tools` without knowing where the package lives.
+`pip install runlog-tools` without knowing where the package lives.
 Registered in pyproject.toml as:
 
     [project.scripts]

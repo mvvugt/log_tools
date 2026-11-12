@@ -241,7 +241,7 @@ is decided by the call itself, not guessed from text shape:
 - **Python** -- ``from log_tools.emitter import log_info, log_warn,
   log_error, log_debug``.
 - **Bash** -- ``source "$(runlog-emitter-path)"`` (after
-  ``pip install log_tools``), then call ``log_info``/``log_warn``/
+  ``pip install runlog-tools``), then call ``log_info``/``log_warn``/
   ``log_error``/``log_debug`` directly.
 
 ``log_info``/``log_warn`` record by default (pass ``record=False`` in

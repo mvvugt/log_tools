@@ -3,7 +3,7 @@ requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "log_tools"
+name = "runlog-tools"
 dynamic = ["version"]
 description = "Record per-script run output into one compact, project-wide Markdown log."
 readme = "README.md"
