@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,14 @@ _SKIP_REASON = (
 _SKIP = (
         shutil.which("runlog") is None
         or shutil.which("runlog-setup-path") is None
+        )
+_SETUP_SH = REPO_ROOT / "log_tools" / "setup.sh"
+# Extra bash to run the strict-mode/teardown tests under, e.g. the system
+# bash 4.2 on Myriad: `RUNLOG_TEST_BASH=/bin/bash pytest ...`. Unset, only
+# the `bash` on PATH is used.
+_BASHES = ["bash"] + (
+        [os.environ["RUNLOG_TEST_BASH"]]
+        if os.environ.get("RUNLOG_TEST_BASH") else []
         )
 
 
@@ -246,9 +255,10 @@ def test_no_unguarded_array_expansion(path: Path) -> None:
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 @pytest.mark.skipif(_SKIP, reason=_SKIP_REASON)
+@pytest.mark.parametrize("bash", _BASHES)
 @pytest.mark.parametrize("exit_code", [0, 1])
 def test_strict_mode_after_setup_keeps_exit_code(
-        git_repo: Path, exit_code: int,
+        git_repo: Path, exit_code: int, bash: str,
         ) -> None:
     """With `set -u` enabled after `runlog_setup` (the Myriad wrapper
     pattern), teardown completes, the script's own exit code is
@@ -266,7 +276,8 @@ def test_strict_mode_after_setup_keeps_exit_code(
     script.chmod(0o755)
 
     result = subprocess.run(
-            [str(script)], cwd=git_repo, capture_output=True, text=True,
+            [bash, str(script)], cwd=git_repo, capture_output=True,
+            text=True,
             )
 
     assert result.returncode == exit_code
@@ -274,3 +285,161 @@ def test_strict_mode_after_setup_keeps_exit_code(
     text = (git_repo / "RUN_LOG.md").read_text()
     assert _order_of(text, "strict_step") > 0
     assert ("- status: failed" in text) is (exit_code != 0)
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+@pytest.mark.skipif(_SKIP, reason=_SKIP_REASON)
+@pytest.mark.parametrize("bash", _BASHES)
+@pytest.mark.parametrize("exit_code", [0, 3])
+def test_teardown_record_failure_only_warns(
+        git_repo: Path, exit_code: int, bash: str,
+        ) -> None:
+    """If `runlog record` fails at teardown (here: the log file's parent
+    is a regular file), the script keeps its own exit code under
+    `set -euo pipefail`, and the warning says only the log entry is
+    missing."""
+    blocker = git_repo / "not_a_dir"
+    blocker.write_text("")
+    script = git_repo / "unrecorded_step.sh"
+    script.write_text(
+            "#!/usr/bin/env bash\n"
+            '# shellcheck disable=SC1090\n'
+            'source "$(runlog-setup-path)"\n'
+            "runlog_setup\n"
+            "set -euo pipefail\n"
+            'log_info "work done"\n'
+            f"exit {exit_code}\n"
+            )
+    script.chmod(0o755)
+
+    result = subprocess.run(
+            [bash, str(script)], cwd=git_repo, capture_output=True,
+            text=True,
+            env=dict(os.environ, RUNLOG_LOG_FILE=str(blocker / "RUN_LOG.md")),
+            )
+
+    # `runlog_setup` merges stderr into stdout and only saves the real
+    # stdout, so teardown messages arrive on stdout.
+    seen = result.stdout + result.stderr
+    assert result.returncode == exit_code, seen
+    assert "unbound variable" not in seen
+    assert f"'unrecorded_step' finished with exit code {exit_code}" in seen
+    assert "NOT recorded" in seen
+    assert "own results are unaffected" in seen
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def _run_sourced(
+        snippet: str, tmp_path: Path, bash: str = "bash",
+        ) -> subprocess.CompletedProcess[str]:
+    """Source the repo's `setup.sh` (no install needed) and run `snippet`.
+
+    Parameters
+    ----------
+    snippet : `str`
+        Bash code run after sourcing, e.g. calls to internal helpers.
+    tmp_path : `Path`
+        Used as `TMPDIR`, so order-state/lock paths stay in the test dir.
+    bash : `str`, optional, default: `"bash"`
+        The bash binary to run under.
+    """
+    code = f'source "{_SETUP_SH}"\n{textwrap.dedent(snippet)}'
+    return subprocess.run(
+            [bash, "-c", code], capture_output=True, text=True,
+            env=dict(os.environ, TMPDIR=str(tmp_path)),
+            )
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+@pytest.mark.parametrize("bash", _BASHES)
+def test_bash_lock_times_out_with_full_warning(
+        tmp_path: Path, bash: str,
+        ) -> None:
+    """A fresh lock held by someone else makes `_runlog_acquire_lock`
+    give up after its timeout with the *whole* warning on stderr, not
+    recorded, leaving the other holder's lock alone."""
+    lock = tmp_path / "held.lock"
+    lock.mkdir()
+    record = tmp_path / "record"
+
+    result = _run_sourced(
+            f"""
+            export RUNLOG_RECORD_FILE="{record}"
+            _RUNLOG_LOCK_TIMEOUT_SECONDS=1
+            _runlog_acquire_lock "{lock}"
+            echo "rc=$?"
+            """,
+            tmp_path, bash,
+            )
+
+    assert "rc=1" in result.stdout
+    assert f"could not acquire order-state lock {lock}" in result.stderr
+    assert "proceeding unlocked" in result.stderr
+    assert not record.exists() or record.read_text() == ""
+    assert lock.is_dir()
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+@pytest.mark.parametrize("bash", _BASHES)
+def test_bash_lock_breaks_stale_lock(tmp_path: Path, bash: str) -> None:
+    """A lock dir older than the stale limit (left by a killed job) is
+    broken and acquired instead of waiting for the timeout."""
+    lock = tmp_path / "stale.lock"
+    lock.mkdir()
+    old = time.time() - 600
+    os.utime(lock, (old, old))
+
+    result = _run_sourced(
+            f"""
+            _RUNLOG_LOCK_TIMEOUT_SECONDS=5
+            _runlog_acquire_lock "{lock}"
+            echo "rc=$?"
+            """,
+            tmp_path, bash,
+            )
+
+    assert "rc=0" in result.stdout, result.stderr
+    assert lock.is_dir()
+    assert lock.stat().st_mtime > old
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+@pytest.mark.parametrize("bash", _BASHES)
+def test_bash_resolve_order_keeps_lock_it_did_not_acquire(
+        tmp_path: Path, bash: str,
+        ) -> None:
+    """When `_runlog_resolve_order` times out on a lock held by a live
+    sibling, it proceeds unlocked but must not remove that sibling's
+    lock."""
+    ppid = 424242
+    lock = tmp_path / f"runlog-order-{ppid}.lock"
+    lock.mkdir()
+
+    result = _run_sourced(
+            f"""
+            _RUNLOG_LOCK_TIMEOUT_SECONDS=1
+            _runlog_resolve_order {ppid} some_step
+            """,
+            tmp_path, bash,
+            )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().isdigit()
+    assert lock.is_dir()
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+@pytest.mark.parametrize("bash", _BASHES)
+def test_bash_resolve_order_releases_its_own_lock(
+        tmp_path: Path, bash: str,
+        ) -> None:
+    """On the normal path the order-state lock is removed afterwards."""
+    ppid = 434343
+
+    result = _run_sourced(
+            f"_runlog_resolve_order {ppid} some_step\n", tmp_path, bash,
+            )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().isdigit()
+    assert not (tmp_path / f"runlog-order-{ppid}.lock").exists()

@@ -34,6 +34,13 @@ source "$(dirname "${BASH_SOURCE[0]}")/emitter.sh"
 
 _RUNLOG_ORDER_STEP=10
 _RUNLOG_STATE_TTL_SECONDS=86400
+# Match log_tools.setup.Constants.LOCK_TIMEOUT_SECONDS/LOCK_STALE_SECONDS.
+_RUNLOG_LOCK_TIMEOUT_SECONDS=10
+_RUNLOG_LOCK_STALE_SECONDS=120
+_RUNLOG_LOCK_POLL_SECONDS=0.05
+# Must match log_tools.runlog.Constants.RECORD_FAILED_NOTE.
+_RUNLOG_RECORD_FAILED_NOTE="Only the log entry is missing; the script's own"
+_RUNLOG_RECORD_FAILED_NOTE+=" results are unaffected."
 # Must match log_tools.runlog.Constants.ERROR_TAIL_DIVIDER exactly --
 # Bash can't import the Python constant, so this is a deliberate,
 # documented duplication of that literal string.
@@ -75,7 +82,30 @@ _runlog_lock_path() {
 
 
 # -----------------------------------------------------------------------
-# Acquire an advisory lock at $1 via atomic mkdir, retrying briefly.
+# Print the modification time of $1 in epoch seconds (GNU or BSD stat).
+#
+# Parameters
+# ----------
+#   $1 - path : File or directory to inspect.
+#
+# Returns
+# -------
+#   0 on success, non-zero if $1 does not exist.
+#
+# Outputs
+# -------
+#   Writes the mtime (integer seconds) to stdout.
+# -----------------------------------------------------------------------
+_runlog_mtime() {
+    local path="${1:?Error: path required}"
+    stat -c %Y "${path}" 2>/dev/null || stat -f %m "${path}" 2>/dev/null
+}
+
+
+# -----------------------------------------------------------------------
+# Acquire an advisory lock at $1 via atomic mkdir, retrying until
+# `_RUNLOG_LOCK_TIMEOUT_SECONDS`; a lock older than
+# `_RUNLOG_LOCK_STALE_SECONDS` (left by a killed job) is broken.
 #
 # Parameters
 # ----------
@@ -83,22 +113,27 @@ _runlog_lock_path() {
 #
 # Returns
 # -------
-#   0 if acquired, 1 if `LOCK_MAX_TRIES` was exceeded (fail open --
-#   callers must not let this abort the script under `set -e`, hence
-#   always invoked as `_runlog_acquire_lock ... || true`).
+#   0 if acquired, 1 on timeout (fail open -- the caller proceeds
+#   unlocked, and must then *not* release the lock, which belongs to
+#   someone else).
 # -----------------------------------------------------------------------
 _runlog_acquire_lock() {
     local lock_dir="${1:?Error: lock_dir required}"
-    local tries=0
+    local deadline mtime now
+    deadline=$(( $(date +%s) + _RUNLOG_LOCK_TIMEOUT_SECONDS ))
     until mkdir "${lock_dir}" 2>/dev/null; do
-        tries=$((tries + 1))
-        if [[ "${tries}" -ge 200 ]]; then
-            log_warn \
-                    "could not acquire order-state lock ${lock_dir};" \
-                    " proceeding unlocked" no-record
+        now="$(date +%s)"
+        if mtime="$(_runlog_mtime "${lock_dir}")" \
+                && (( now - mtime > _RUNLOG_LOCK_STALE_SECONDS )); then
+            rmdir "${lock_dir}" 2>/dev/null || true
+            continue
+        fi
+        if (( now >= deadline )); then
+            log_warn "could not acquire order-state lock ${lock_dir};\
+ proceeding unlocked" no-record
             return 1
         fi
-        sleep 0.05
+        sleep "${_RUNLOG_LOCK_POLL_SECONDS}"
     done
     return 0
 }
@@ -143,7 +178,11 @@ _runlog_resolve_order() {
     state_path="$(_runlog_state_path "${ppid}")"
     lock_path="$(_runlog_lock_path "${ppid}")"
 
-    _runlog_acquire_lock "${lock_path}" || true
+    # 0 = we hold the lock (bash exit-code convention), 1 = timed out.
+    local locked=1
+    if _runlog_acquire_lock "${lock_path}"; then
+        locked=0
+    fi
 
     local -A state=()
     if [[ -f "${state_path}" ]]; then
@@ -184,7 +223,9 @@ _runlog_resolve_order() {
     } > "${state_path}.tmp"
     mv "${state_path}.tmp" "${state_path}"
 
-    _runlog_release_lock "${lock_path}"
+    if [[ "${locked}" -eq 0 ]]; then
+        _runlog_release_lock "${lock_path}"
+    fi
     echo "${order}"
 }
 
@@ -293,9 +334,19 @@ _runlog_teardown() {
 
     # `${arr[@]+"${arr[@]}"}`, not `"${arr[@]}"`: bash < 4.4 treats an
     # empty array as unbound under `set -u`, which would abort this trap.
-    runlog record --id "${_RUNLOG_SCRIPT_ID}" --order "${_RUNLOG_ORDER}" \
-            --root "${_RUNLOG_ROOT}" --log-file "${_RUNLOG_LOG_FILE}" \
+    # A logging failure must not change the script's own exit status
+    # (e.g. cancel a SLURM `afterok` job): warn only.
+    if ! runlog record --id "${_RUNLOG_SCRIPT_ID}" \
+            --order "${_RUNLOG_ORDER}" --root "${_RUNLOG_ROOT}" \
+            --log-file "${_RUNLOG_LOG_FILE}" \
             ${failed_flag[@]+"${failed_flag[@]}"} --stdin <<< "${output}"
+    then
+        local msg
+        msg="'${_RUNLOG_SCRIPT_ID}' finished with exit code ${exit_code},"
+        msg+=" but its run was NOT recorded in ${_RUNLOG_LOG_FILE}."
+        msg+=" ${_RUNLOG_RECORD_FAILED_NOTE}"
+        log_warn "${msg}" no-record
+    fi
 
     rm -f "${_RUNLOG_RAW_TMP}" "${RUNLOG_RECORD_FILE}"
 }
