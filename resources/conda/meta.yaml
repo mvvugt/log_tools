@@ -23,8 +23,6 @@ requirements:
 test:
   source_files:
     # Copy the tests over to the testing directory.
-    # NOTE: tests/ doesn't exist yet (deferred, see TODO.md) -- this
-    # recipe isn't run by anything until the test suite lands.
     - tests/
   requires:
     - pytest

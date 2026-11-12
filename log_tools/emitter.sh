@@ -8,6 +8,21 @@
 # call out); log_debug is the opposite, off by default (pass "record" as
 # $2 to opt in). log_error always records. Each function takes a single
 # $1 message (not $*) so $2 is unambiguously the recording-toggle slot.
+#
+# log_stage $1=name marks a stage boundary: always recorded, printed
+# like log_info but tagged [stage]. Everything recorded after it, up to
+# the next log_stage call, is grouped under that name by
+# log_tools.runlog.split_stages when `record()` diffs -- see
+# log_tools/emitter.py's log_stage docstring for the full rationale.
+#
+# log_count $1=key increments an in-process counter for key; prints and
+# records nothing. Call once per high-cardinality event (e.g. once per
+# file in a loop) instead of log_info, then call
+# log_count_summary $1=key [$2=label] once after the loop to record one
+# "label: count" line (via log_info) instead of one row per event, and
+# reset key's counter to 0.
+
+declare -gA _LOG_TOOLS_COUNTS=()
 
 _write_record() {
     # $1 = formatted message, $2 = "1"/"0" whether to record it.
@@ -44,4 +59,23 @@ log_error() {
     local msg="[error] $(date '+%Y-%m-%d %H:%M:%S') $1"
     echo "${msg}" >&2
     _write_record "${msg}" 1
+}
+
+log_stage() {
+    local msg="[stage] $(date '+%Y-%m-%d %H:%M:%S') $1"
+    echo "${msg}"
+    _write_record "${msg}" 1
+}
+
+log_count() {
+    local key="${1:?Error: key required}"
+    _LOG_TOOLS_COUNTS["${key}"]=$(( ${_LOG_TOOLS_COUNTS["${key}"]:-0} + 1 ))
+}
+
+log_count_summary() {
+    local key="${1:?Error: key required}"
+    local label="${2:-${key}}"
+    local count="${_LOG_TOOLS_COUNTS[${key}]:-0}"
+    unset "_LOG_TOOLS_COUNTS[${key}]"
+    log_info "${label}: ${count}"
 }

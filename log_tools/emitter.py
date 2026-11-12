@@ -12,6 +12,10 @@ given call out); `log_debug` is the opposite, off by default (pass
 ``record=True`` to opt in), since debug output is expected to be noisy.
 `log_error` always records. All four always print -- there is no
 level-based verbosity gate.
+
+`log_count`/`log_count_summary` batch high-cardinality events (e.g. one
+call per file in a loop) into a single recorded summary line instead of
+one row per event -- see `log_count_summary`.
 """
 from __future__ import annotations
 
@@ -37,6 +41,10 @@ _PREFIX_BY_LEVEL: dict[int, str] = {
 
 _LOGGER_NAME = "log_tools"
 
+_counts: dict[str, int] = {}
+"""In-process counters keyed by `log_count`'s `key`, read/reset by
+`log_count_summary`. Not persisted -- scoped to a single script run."""
+
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 class _TagFormatter(logging.Formatter):
@@ -52,8 +60,17 @@ class _TagFormatter(logging.Formatter):
     """
 
     def format(self, record: logging.LogRecord) -> str:
-        """Format `record` using `_PREFIX_BY_LEVEL` for the bracket tag."""
-        prefix = _PREFIX_BY_LEVEL.get(record.levelno, "[info] ")
+        """Format `record` using `_PREFIX_BY_LEVEL` for the bracket tag.
+
+        A record carrying a truthy `stage` attribute (set by `log_stage`)
+        uses the literal `"[stage]"` prefix instead of the level-based
+        lookup -- stage markers are a structural annotation, not a log
+        level.
+        """
+        if getattr(record, "stage", False):
+            prefix = "[stage]"
+        else:
+            prefix = _PREFIX_BY_LEVEL.get(record.levelno, "[info] ")
         timestamp = self.formatTime(record, self.datefmt)
         return f"{prefix} {timestamp} {record.getMessage()}"
 
@@ -193,3 +210,53 @@ def log_warn(msg: str, *, record: bool = True) -> None:
 def log_error(msg: str) -> None:
     """Log `msg` at ERROR level; always recorded."""
     get_logger().error(msg)
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def log_stage(name: str) -> None:
+    """Mark the start of stage `name`; always recorded, printed to stdout.
+
+    Produces a `"[stage] <timestamp> <name>"` line matching
+    `log_tools.runlog.Constants.STAGE_MARKER_PATTERN`. Everything
+    recorded after this call, up to the next `log_stage` call, is
+    grouped under `name` by `log_tools.runlog.split_stages` when
+    `record()` computes a diff -- so a stage that ran for the first
+    time is never diffed against nothing, and a stage that is unchanged
+    across runs never drowns out a stage that genuinely changed.
+    """
+    get_logger().info(name, extra={"record": True, "stage": True})
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def log_count(key: str) -> None:
+    """Increment `key`'s in-process counter; does not print or record.
+
+    Call once per high-cardinality event (e.g. once per file in a loop)
+    in place of `log_info`/`log_debug`, then call `log_count_summary(key)`
+    once after the loop to record a single summary line instead of one
+    row per event.
+    """
+    _counts[key] = _counts.get(key, 0) + 1
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def log_count_summary(key: str, *, label: str | None = None) -> None:
+    """Record one summary line for `key`'s count, then reset it to 0.
+
+    Parameters
+    ----------
+    key : `str`
+        The counter to summarize, as passed to `log_count`.
+    label : `str` or `None`, optional
+        Text shown in place of `key` in the summary line. Defaults to
+        `key` itself.
+
+    Notes
+    -----
+    Emits `"<label or key>: <count>"` via `log_info` (printed to stdout,
+    always appended to the record file -- like `log_stage`, this call
+    always records). A `key` never passed to `log_count` summarizes as
+    `0`, which is itself useful signal (e.g. "files failed: 0").
+    """
+    count = _counts.pop(key, 0)
+    log_info(f"{label or key}: {count}")

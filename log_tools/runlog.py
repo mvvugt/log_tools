@@ -15,6 +15,13 @@ Recorded output is produced primarily by scripts calling into
 process via ``Constants.RECORD_FILE_ENV_VAR`` -- see `run_and_record`.
 An optional user-supplied ``include_pattern`` regex can additionally
 pull matching raw lines into the recorded output.
+
+A script whose output naturally splits into independent sections (e.g.
+one execution that prepares several unrelated job types) can call
+``log_stage(name)`` between them; `record` then diffs each stage
+separately (see `split_stages`) instead of diffing the whole output as
+one blob, so a stage that ran for the first time or is unchanged never
+buries a diff in a stage that actually changed.
 """
 from __future__ import annotations
 
@@ -29,7 +36,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from log_tools.functions import atomic_write, get_git_info
+from log_tools.functions import atomic_write, file_lock, get_git_info
 
 _log = logging.getLogger(__name__)
 
@@ -44,6 +51,39 @@ class Constants:
     TAG_PATTERN: str = r"^\[[A-Za-z]+\]"  # emitter's documented format
     ERROR_TAIL_DIVIDER: str = "--- error output (raw) ---"
     RECORD_FILE_ENV_VAR: str = "RUNLOG_RECORD_FILE"
+    STAGE_MARKER_PATTERN: str = (
+            r"^\[stage\] \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} (.+)$"
+            )
+    """Matches a `log_stage` marker line; group 1 is the stage name."""
+    EMITTER_TIMESTAMP_PATTERN: str = (
+            r"^(\[[A-Za-z]+\]\s+)\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} "
+            )
+    """Matches an emitter line's tag + timestamp prefix; group 1 is the
+    padded tag. Used by `diff_text` to ignore timestamps when comparing."""
+    DEFAULT_STAGE_KEY: str = ""
+    """`split_stages` key for content before the first marker, or the
+    whole output when there are no markers at all."""
+    LOCK_SUFFIX: str = ".lock"
+    """Appended to the log file's name for `record()`'s lock dir."""
+    RECORD_LOCK_TIMEOUT_SECONDS: float = 30.0
+    """How long `record()` waits for a concurrent writer's lock."""
+    RECORD_LOCK_STALE_SECONDS: float = 120.0
+    """Age after which `record()` breaks an abandoned lock."""
+    RECORD_FAILED_NOTE: str = (
+            "Only the log entry is missing; the script's own results are "
+            "unaffected."
+            )
+    """Appended to every record-failure message, so it is not mistaken
+    for the script itself having failed."""
+    RECORD_FAILED_AFTER_RUN_MSG: str = (
+            "%r finished with exit code %d, but its run was NOT recorded "
+            "in %s: %s. " + RECORD_FAILED_NOTE
+            )
+    """`%`-style warning when a wrapped script ran but `record()` failed;
+    args: script id, exit code, log file, reason."""
+
+
+_EMITTER_TIMESTAMP_RE = re.compile(Constants.EMITTER_TIMESTAMP_PATTERN)
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -60,6 +100,12 @@ class Entry:
     timestamp: str
     """Local timestamp of the run, ``YYYY-MM-DD HH:MM:SS``."""
 
+    first_run: str
+    """Local timestamp of this script id's first-ever recorded run,
+    ``YYYY-MM-DD HH:MM:SS``. Set once and never changed on reruns; see
+    `record`. Falls back to `timestamp` when parsed from a log written
+    before this field existed (see `parse_log`)."""
+
     commit: str
     """Short git commit hash active at run time (``"unknown"`` if not
     a git repo or git is unavailable)."""
@@ -75,10 +121,11 @@ class Entry:
     """The captured output text for this run."""
 
     diff: str | None = None
-    """Unified diff vs the previous run's output, shown as a sibling
-    block above `output` when not `None`. Computed fresh at record
-    time -- never re-derived from a parsed file, so it is never nested
-    inside the ``Output:`` code fence."""
+    """Per-stage diff(s) vs the previous run's output (see
+    `split_stages`/`_stage_diff_blocks`), shown as a sibling block above
+    `output` when not `None`. Computed fresh at record time -- never
+    re-derived from a parsed file, so it is never nested inside the
+    ``Output:`` code fence."""
 
     failed: bool = False
     """Whether this run's underlying command failed. Only ever set
@@ -120,12 +167,15 @@ def parse_log(path: Path) -> dict[str, Entry]:
         i += 1
 
         timestamp = ""
+        first_run = ""
         commit = "unknown"
         dirty = False
         failed = False
         while i < len(lines) and lines[i].startswith("- "):
             meta = lines[i][2:]
-            if meta.startswith("last run: "):
+            if meta.startswith("first run: "):
+                first_run = meta[len("first run: "):]
+            elif meta.startswith("last run: "):
                 timestamp = meta[len("last run: "):]
             elif meta.startswith("commit: "):
                 commit = meta[len("commit: `"):].split("`")[0]
@@ -133,6 +183,11 @@ def parse_log(path: Path) -> dict[str, Entry]:
             elif meta.startswith("status: "):
                 failed = meta[len("status: "):].strip() == "failed"
             i += 1
+
+        # logs written before this field existed have no `- first run:`
+        # line -- fall back to this section's last-run timestamp.
+        if not first_run:
+            first_run = timestamp
 
         # skip any diff block, then read the current "Output:" fenced block
         output_lines: list[str] = []
@@ -154,8 +209,8 @@ def parse_log(path: Path) -> dict[str, Entry]:
 
         entries[script_id] = Entry(
                 script_id=script_id, order=order, timestamp=timestamp,
-                commit=commit, dirty=dirty, label=label,
-                output="\n".join(output_lines), failed=failed,
+                first_run=first_run, commit=commit, dirty=dirty,
+                label=label, output="\n".join(output_lines), failed=failed,
                 )
 
     return entries
@@ -177,19 +232,168 @@ def diff_text(old: str, new: str) -> str | None:
     diff : `str` or `None`
         Unified diff text (no file headers), truncated to
         `Constants.MAX_DIFF_LINES` with a trailing note if longer. `None`
-        if `old` and `new` are identical.
+        if `old` and `new` are identical once emitter timestamps are
+        ignored.
+
+    Notes
+    -----
+    Lines are compared with their emitter timestamp removed (see
+    `_strip_emitter_timestamp`), so a line that only differs in when it
+    was logged is not a change. The diff itself shows the original
+    lines, timestamps included; unchanged context lines are taken from
+    `new`.
     """
-    if old == new:
+    old_lines = old.splitlines()
+    new_lines = new.splitlines()
+    old_norm = [_strip_emitter_timestamp(line) for line in old_lines]
+    new_norm = [_strip_emitter_timestamp(line) for line in new_lines]
+    if old_norm == new_norm:
         return None
 
-    diff_lines = list(difflib.unified_diff(
-            old.splitlines(), new.splitlines(), lineterm="",
-            ))[2:]  # drop the "---"/"+++" file-header lines
+    matcher = difflib.SequenceMatcher(None, old_norm, new_norm)
+    diff_lines: list[str] = []
+    for group in matcher.get_grouped_opcodes(3):
+        first, last = group[0], group[-1]
+        old_range = _unified_range(first[1], last[2])
+        new_range = _unified_range(first[3], last[4])
+        diff_lines.append(f"@@ -{old_range} +{new_range} @@")
+        for tag, i1, i2, j1, j2 in group:
+            if tag == "equal":
+                diff_lines.extend(f" {line}" for line in new_lines[j1:j2])
+                continue
+            diff_lines.extend(f"-{line}" for line in old_lines[i1:i2])
+            diff_lines.extend(f"+{line}" for line in new_lines[j1:j2])
+
     if len(diff_lines) > Constants.MAX_DIFF_LINES:
         omitted = len(diff_lines) - Constants.MAX_DIFF_LINES
         diff_lines = diff_lines[:Constants.MAX_DIFF_LINES]
         diff_lines.append(f"... {omitted} more line(s) omitted")
     return "\n".join(diff_lines)
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def _strip_emitter_timestamp(line: str) -> str:
+    """Remove an emitter line's timestamp, keeping its tag.
+
+    Parameters
+    ----------
+    line : `str`
+        One output line, e.g. ``[info]  2026-01-01 00:00:00 msg``.
+
+    Returns
+    -------
+    line : `str`
+        The line without its timestamp (``[info]  msg``), or unchanged if
+        it does not match `Constants.EMITTER_TIMESTAMP_PATTERN`.
+    """
+    return _EMITTER_TIMESTAMP_RE.sub(r"\1", line, count=1)
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def _unified_range(start: int, stop: int) -> str:
+    """Format a line range for a unified-diff ``@@`` hunk header.
+
+    Parameters
+    ----------
+    start : `int`
+        Zero-based start index of the range.
+    stop : `int`
+        Zero-based exclusive end index of the range.
+
+    Returns
+    -------
+    range : `str`
+        ``"start,length"`` (one-based), ``"start"`` for a single line, or
+        ``"start,0"`` for an empty range -- matching `difflib`'s own
+        formatting.
+    """
+    length = stop - start
+    beginning = start + 1
+    if length == 1:
+        return f"{beginning}"
+    if length == 0:
+        beginning -= 1  # empty ranges begin at the line just before
+    return f"{beginning},{length}"
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def split_stages(output: str) -> dict[str, str]:
+    """Split `output` into named stages via `log_stage`'s marker lines.
+
+    Parameters
+    ----------
+    output : `str`
+        Recorded output text, optionally containing
+        ``[stage] <timestamp> <name>`` marker lines emitted by
+        `log_tools.emitter.log_stage` / ``log_tools/emitter.sh``'s
+        ``log_stage``.
+
+    Returns
+    -------
+    stages : `dict[str, str]`
+        Mapping of stage name to its content (the lines emitted after
+        that marker, up to the next one), in first-seen order. Content
+        before the first marker -- or the entire output, when there are
+        no markers -- is keyed by `Constants.DEFAULT_STAGE_KEY`. A
+        repeated marker for the same name concatenates onto that name's
+        existing content rather than overwriting it. Stages with no
+        content are omitted.
+    """
+    pattern = re.compile(Constants.STAGE_MARKER_PATTERN)
+    stages: dict[str, list[str]] = {}
+    current = Constants.DEFAULT_STAGE_KEY
+    for line in output.splitlines():
+        match = pattern.match(line)
+        if match:
+            current = match.group(1)
+            continue
+        stages.setdefault(current, []).append(line)
+    return {name: "\n".join(lines) for name, lines in stages.items() if lines}
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def _stage_diff_blocks(
+        old_stages: dict[str, str], new_stages: dict[str, str],
+        ) -> list[str]:
+    """Build per-stage diff blocks/notes for a stage-aware `record()` diff.
+
+    Parameters
+    ----------
+    old_stages : `dict[str, str]`
+        Previous run's output, split via `split_stages`.
+    new_stages : `dict[str, str]`
+        New run's output, split via `split_stages`.
+
+    Returns
+    -------
+    blocks : `list[str]`
+        One entry per stage that has something to report, in
+        `new_stages`' order followed by dropped stages in `old_stages`'
+        order. A stage in `new_stages` absent from `old_stages` (it ran
+        for the first time) is skipped entirely -- diffing against
+        nothing is not a meaningful diff. A stage in `old_stages` absent
+        from `new_stages` gets a one-line "not present this run" note
+        instead of a diff. `Constants.DEFAULT_STAGE_KEY` (no explicit
+        `log_stage` calls used) renders its diff unlabeled, identical to
+        `record()`'s pre-stage-splitting output.
+    """
+    blocks: list[str] = []
+    for name, new_content in new_stages.items():
+        if name not in old_stages:
+            continue
+        diff = diff_text(old_stages[name], new_content)
+        if diff is None:
+            continue
+        if name == Constants.DEFAULT_STAGE_KEY:
+            blocks.append(f"```diff\n{diff}\n```")
+        else:
+            blocks.append(f"stage `{name}`:\n```diff\n{diff}\n```")
+
+    for name in old_stages:
+        if name not in new_stages:
+            blocks.append(f"- stage `{name}`: not present this run")
+
+    return blocks
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -295,6 +499,7 @@ def render_log(entries: dict[str, Entry]) -> str:
         dirty_note = " (dirty)" if entry.dirty else ""
         block = [
                 f"{Constants.SECTION_HEADER_PREFIX}{title}",
+                f"- first run: {entry.first_run}",
                 f"- last run: {entry.timestamp}",
                 f"- commit: `{entry.commit}`{dirty_note}",
                 ]
@@ -333,59 +538,94 @@ def record(
         If `True`, skip computing/rendering a diff against the previous
         run -- a diff is noise on a failed run.
 
+    Raises
+    ------
+    LockTimeoutError
+        If another writer holds the lock for longer than
+        `Constants.RECORD_LOCK_TIMEOUT_SECONDS`; nothing is written.
+
     Notes
     -----
     Writes are atomic (see `log_tools.functions.atomic_write`), so a crash
-    mid-write cannot corrupt the log. If the previous run for this id had
+    mid-write cannot corrupt the log. The whole read-modify-write runs
+    under `log_tools.functions.file_lock` (``<log_file>.lock``), so
+    concurrent writers (e.g. array tasks sharing one log) never lose each
+    other's entries. If the previous run for this id had
     failed and this one succeeds, and the previous run's output contains
     `Constants.ERROR_TAIL_DIVIDER`, that tail is stripped before diffing
     and a "- error resolved" note is shown instead of a raw diff of its
     removal.
+
+    The diff is computed per stage (see `split_stages`), not over the
+    whole output blob: a stage named via `log_stage` that ran for the
+    first time is never diffed against nothing, and a stage unchanged
+    across runs never buries a stage that genuinely changed inside one
+    large diff. Output that never calls `log_stage` behaves exactly as
+    before -- it is one implicit stage, diffed as a whole.
+
+    `Entry.first_run` is set once, on the first `record()` call for a
+    given `script_id`, and preserved unchanged on every subsequent call
+    -- including after a failed run.
     """
-    entries = parse_log(log_file)
-    commit, dirty = get_git_info(root)
-    previous = entries.get(script_id)
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = log_file.with_name(log_file.name + Constants.LOCK_SUFFIX)
+    with file_lock(
+            lock_path, timeout=Constants.RECORD_LOCK_TIMEOUT_SECONDS,
+            stale_after=Constants.RECORD_LOCK_STALE_SECONDS,
+            ):
+        entries = parse_log(log_file)
+        commit, dirty = get_git_info(root)
+        previous = entries.get(script_id)
 
-    diff = None
-    resolved_note = False
-    if not failed and previous is not None:
-        old_for_diff = previous.output
-        if previous.failed and Constants.ERROR_TAIL_DIVIDER in previous.output:
-            resolved_note = True
-            old_for_diff, _, _tail = previous.output.partition(
-                    Constants.ERROR_TAIL_DIVIDER,
+        diff_parts: list[str] = []
+        resolved_note = False
+        if not failed and previous is not None:
+            old_for_diff = previous.output
+            if (
+                    previous.failed
+                    and Constants.ERROR_TAIL_DIVIDER in previous.output
+                    ):
+                resolved_note = True
+                old_for_diff, _, _tail = previous.output.partition(
+                        Constants.ERROR_TAIL_DIVIDER,
+                        )
+                old_for_diff = old_for_diff.rstrip("\n")
+
+            diff_parts = _stage_diff_blocks(
+                    split_stages(old_for_diff), split_stages(output),
                     )
-            old_for_diff = old_for_diff.rstrip("\n")
+            if diff_parts:
+                _log.info(
+                        "changes vs previous run of %r:\n%s", script_id,
+                        "\n".join(diff_parts),
+                        )
+            elif resolved_note:
+                _log.info("error resolved vs previous run of %r", script_id)
+            else:
+                _log.info("no change vs previous run of %r", script_id)
 
-        diff = diff_text(old_for_diff, output)
-        if diff is not None:
-            _log.info("changes vs previous run of %r:\n%s", script_id, diff)
-        elif resolved_note:
-            _log.info("error resolved vs previous run of %r", script_id)
-        else:
-            _log.info("no change vs previous run of %r", script_id)
+        diff_block = None
+        if (diff_parts or resolved_note) and previous is not None:
+            prev_dirty_note = " (dirty)" if previous.dirty else ""
+            parts = [
+                    f"Δ vs previous run (was `{previous.commit}`"
+                    f"{prev_dirty_note}):",
+                    ]
+            if resolved_note:
+                parts.append("- error resolved")
+            parts.extend(diff_parts)
+            diff_block = "\n".join(parts)
 
-    diff_block = None
-    if (diff is not None or resolved_note) and previous is not None:
-        prev_dirty_note = " (dirty)" if previous.dirty else ""
-        parts = [
-                f"Δ vs previous run (was `{previous.commit}`"
-                f"{prev_dirty_note}):",
-                ]
-        if resolved_note:
-            parts.append("- error resolved")
-        if diff is not None:
-            parts.append(f"```diff\n{diff}\n```")
-        diff_block = "\n".join(parts)
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        first_run = previous.first_run if previous is not None else now
 
-    entries[script_id] = Entry(
-            script_id=script_id, order=order,
-            timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            commit=commit, dirty=dirty, label=label, output=output,
-            diff=diff_block, failed=failed,
-            )
+        entries[script_id] = Entry(
+                script_id=script_id, order=order, timestamp=now,
+                first_run=first_run, commit=commit, dirty=dirty, label=label,
+                output=output, diff=diff_block, failed=failed,
+                )
 
-    atomic_write(log_file, render_log(entries))
+        atomic_write(log_file, render_log(entries))
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -419,7 +659,9 @@ def run_and_record(
     -------
     returncode : `int`
         The wrapped command's exit code, unchanged, so callers (e.g. a
-        ``set -eo pipefail`` bash script) still see failures.
+        ``set -eo pipefail`` bash script) still see failures. A failure
+        to record (e.g. `LockTimeoutError`) is logged as a warning and
+        never changes it.
 
     Notes
     -----
@@ -460,8 +702,17 @@ def run_and_record(
             failed=failed,
             )
 
-    record(
-            log_file=log_file, script_id=script_id, order=order,
-            output=output, root=root, label=" ".join(command), failed=failed,
-            )
+    try:
+        record(
+                log_file=log_file, script_id=script_id, order=order,
+                output=output, root=root, label=" ".join(command),
+                failed=failed,
+                )
+    except Exception as exc:
+        # A logging failure must not change the wrapped command's result
+        # (e.g. cancel a SLURM `afterok` dependency): warn only.
+        _log.warning(
+                Constants.RECORD_FAILED_AFTER_RUN_MSG, script_id,
+                proc.returncode, log_file, exc,
+                )
     return proc.returncode

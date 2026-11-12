@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import argparse
 import logging
-import subprocess
 import sys
 from pathlib import Path
 
 from log_tools import __version__
+from log_tools.functions import resolve_git_root
 from log_tools.runlog import (
     Constants,
     filter_matching_lines,
@@ -98,6 +98,11 @@ def _init_cmd_args() -> argparse.ArgumentParser:
             "--stdin", action="store_true",
             help="Read output text to record from stdin.",
             )
+    record_parser.add_argument(
+            "--failed", action="store_true",
+            help="Mark this run as failed (skips the diff vs the "
+                 "previous run, same as `run` does on a non-zero exit).",
+            )
 
     return parser
 
@@ -127,19 +132,10 @@ def _resolve_root(root_arg: Path | None) -> Path:
     SystemExit
         If `root_arg` is `None` and cwd is not inside a git working tree.
     """
-    if root_arg is not None:
-        return root_arg
     try:
-        top = subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],
-                check=True, capture_output=True, text=True,
-                ).stdout.strip()
-        return Path(top)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        sys.exit(
-                "error: --root not given and cwd is not inside a git "
-                "working tree",
-                )
+        return resolve_git_root(root_arg)
+    except RuntimeError as exc:
+        sys.exit(f"error: {exc}")
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -171,10 +167,19 @@ def main() -> None:
             output = "\n".join(
                     filter_matching_lines(output, args.include_pattern),
                     )
-        record(
-                log_file=log_file, script_id=args.script_id,
-                order=args.order, output=output, root=root,
-                )
+        try:
+            record(
+                    log_file=log_file, script_id=args.script_id,
+                    order=args.order, output=output, root=root,
+                    failed=args.failed,
+                    )
+        except Exception as exc:
+            logging.getLogger(__name__).error(
+                    "run of %r was NOT recorded in %s: %s. %s",
+                    args.script_id, log_file, exc,
+                    Constants.RECORD_FAILED_NOTE,
+                    )
+            sys.exit(1)
 
 
 if __name__ == "__main__":

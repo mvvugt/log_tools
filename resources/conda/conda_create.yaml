@@ -10,3 +10,6 @@ dependencies:
   - python-build
   - twine
   - sphinx
+  - pyyaml
+  - setuptools>=77
+  - wheel

@@ -7,9 +7,44 @@ for that).
 """
 from __future__ import annotations
 
+import contextlib
 import os
+import stat
 import subprocess
+import tempfile
+import time
+from collections.abc import Iterator
 from pathlib import Path
+
+DIRTY_CHECK_EXTENSIONS: tuple[str, ...] = (".py", ".sh")
+"""File extensions that count towards `get_git_info`'s dirty flag."""
+LOCK_POLL_INTERVAL_SECONDS: float = 0.05
+"""How often `file_lock` retries a held lock."""
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+class LockTimeoutError(RuntimeError):
+    """Raised when `file_lock` cannot acquire its lock within `timeout`."""
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def _is_script_status_line(line: str) -> bool:
+    """Whether a `git status --porcelain` line's path is a script file.
+
+    Parameters
+    ----------
+    line : `str`
+        One non-empty line from ``git status --porcelain`` output, e.g.
+        ``" M foo.py"`` or ``"R  old.py -> new.sh"``.
+
+    Returns
+    -------
+    is_script : `bool`
+        `True` if the line's path (the rename destination, if a rename)
+        ends with one of `DIRTY_CHECK_EXTENSIONS`.
+    """
+    path = line[3:].split(" -> ")[-1].strip().strip('"')
+    return path.endswith(DIRTY_CHECK_EXTENSIONS)
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -27,8 +62,12 @@ def get_git_info(root: Path) -> tuple[str, bool]:
         Short commit hash, or ``"unknown"`` if `root` is not a git repo or
         git is not available.
     dirty : `bool`
-        `True` if the working tree has uncommitted changes; `False` if
-        clean or unknown.
+        `True` if a tracked or untracked script file (`.py`/`.sh`, see
+        `DIRTY_CHECK_EXTENSIONS`) has uncommitted changes; `False`
+        otherwise (including when only non-script files, e.g. a run-log
+        Markdown file rewritten by this very tool, are uncommitted --
+        without this filter, that self-rewrite would permanently flag
+        every subsequent run as dirty).
     """
     try:
         commit = subprocess.run(
@@ -39,9 +78,48 @@ def get_git_info(root: Path) -> tuple[str, bool]:
                 ["git", "-C", str(root), "status", "--porcelain"],
                 check=True, capture_output=True, text=True,
                 ).stdout
-        return commit, bool(status.strip())
+        dirty = any(
+                _is_script_status_line(line)
+                for line in status.splitlines() if line.strip()
+                )
+        return commit, dirty
     except (subprocess.CalledProcessError, FileNotFoundError):
         return "unknown", False
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def resolve_git_root(root: Path | None) -> Path:
+    """Resolve the git working-tree root, defaulting from cwd.
+
+    Parameters
+    ----------
+    root : `Path` or `None`
+        Explicit root, if already known/given.
+
+    Returns
+    -------
+    root : `Path`
+        `root` unchanged if given, else the result of
+        `git rev-parse --show-toplevel` run from cwd.
+
+    Raises
+    ------
+    RuntimeError
+        If `root` is `None` and cwd is not inside a git working tree.
+    """
+    if root is not None:
+        return root
+    try:
+        top = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                check=True, capture_output=True, text=True,
+                ).stdout.strip()
+        return Path(top)
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        raise RuntimeError(
+                "--root not given and cwd is not inside a git "
+                "working tree",
+                ) from exc
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -60,8 +138,123 @@ def atomic_write(path: Path, content: str) -> None:
     Writes to a temp file in the same directory as `path`, then moves it
     into place with `os.replace`, so a crash mid-write cannot corrupt the
     destination file.
+
+    The temp file name is unique per call (`tempfile.mkstemp`), so
+    concurrent writers (e.g. SGE array tasks sharing one RUN_LOG.md)
+    never collide on it. The last `os.replace` wins; updates are not
+    merged -- callers doing a read-modify-write must hold `file_lock`
+    (as `log_tools.runlog.record` does). The result keeps the existing
+    file's permission bits, or gets ``0o666 & ~umask`` when newly
+    created.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    tmp_path.write_text(content)
-    os.replace(tmp_path, path)
+    if path.exists():
+        mode = stat.S_IMODE(path.stat().st_mode)
+    else:
+        # No portable read-only umask getter: set-and-restore. Only hit
+        # when the file is first created.
+        umask = os.umask(0)
+        os.umask(umask)
+        mode = 0o666 & ~umask
+    fd, tmp_name = tempfile.mkstemp(
+            dir=path.parent, prefix=f".{path.name}.", suffix=".tmp",
+            )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(content)
+        os.chmod(tmp_path, mode)
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def _break_if_stale(lock_path: Path, stale_after: float) -> bool:
+    """Remove `lock_path` if it is older than `stale_after` seconds.
+
+    Parameters
+    ----------
+    lock_path : `Path`
+        The lock directory.
+    stale_after : `float`
+        Age in seconds (by the dir's mtime) after which a lock is
+        considered abandoned, e.g. left by a killed job.
+
+    Returns
+    -------
+    broken : `bool`
+        `True` if the lock was stale and removed (or already gone).
+    """
+    try:
+        age = time.time() - lock_path.stat().st_mtime
+    except FileNotFoundError:
+        return True
+    if age <= stale_after:
+        return False
+    with contextlib.suppress(FileNotFoundError):
+        lock_path.rmdir()
+    return True
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+@contextlib.contextmanager
+def file_lock(
+        lock_path: Path, *, timeout: float, stale_after: float,
+        poll_interval: float = LOCK_POLL_INTERVAL_SECONDS,
+        ) -> Iterator[None]:
+    """Hold an exclusive, cross-process lock for the duration of a block.
+
+    Parameters
+    ----------
+    lock_path : `Path`
+        Lock directory to create, e.g. ``RUN_LOG.md.lock``. Its parent
+        must exist.
+    timeout : `float`
+        Seconds to keep retrying a held lock before giving up.
+    stale_after : `float`
+        A lock dir older than this many seconds is treated as abandoned
+        and broken.
+    poll_interval : `float`, optional, default: `LOCK_POLL_INTERVAL_SECONDS`
+        Seconds between retries.
+
+    Raises
+    ------
+    LockTimeoutError
+        If the lock is still held (and not stale) after `timeout`.
+    OSError
+        If the lock dir cannot be created for another reason (e.g. the
+        parent is missing or not writable).
+
+    Notes
+    -----
+    Uses atomic ``mkdir`` rather than ``fcntl.flock``: ``mkdir`` is
+    atomic on every filesystem this is used on (local disks, NFS, GPFS,
+    Lustre), whereas cross-node ``flock`` depends on mount options.
+
+    Breaking a stale lock is not race-free: if two waiters both see the
+    same stale lock, the slower one can remove the lock the faster one
+    has just taken. This needs a lock to go unreleased for
+    `stale_after` seconds first (a killed job), so it is accepted as
+    rare.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            lock_path.mkdir()
+            break
+        except FileExistsError:
+            if _break_if_stale(lock_path, stale_after):
+                continue
+            if time.monotonic() >= deadline:
+                raise LockTimeoutError(
+                        f"could not acquire lock {str(lock_path)!r} "
+                        f"within {timeout:g}s",
+                        ) from None
+            time.sleep(poll_interval)
+    try:
+        yield
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            lock_path.rmdir()

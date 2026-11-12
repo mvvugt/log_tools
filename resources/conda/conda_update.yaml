@@ -1,7 +1,7 @@
 channels:
   - conda-forge
 dependencies:
-  - python=>3.11
+  - python=>3.9
   - pip
   - pytest
   - ruff
@@ -9,3 +9,6 @@ dependencies:
   - python-build
   - twine
   - sphinx
+  - pyyaml
+  - setuptools>=77
+  - wheel

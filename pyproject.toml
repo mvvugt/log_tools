@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +7,7 @@ name = "log_tools"
 dynamic = ["version"]
 description = "Record per-script run output into one compact, project-wide Markdown log."
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.9"
 license = "MIT"
 license-files = ["LICENSE.txt"]
 authors = [
@@ -15,16 +15,20 @@ authors = [
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Operating System :: OS Independent",
     "Development Status :: 3 - Alpha",
 ]
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest", "ruff", "bump2version", "build", "twine", "sphinx"]
+dev = ["pytest", "ruff", "bump2version", "build", "twine", "sphinx",
+       "pyyaml", "setuptools>=77", "wheel"]
 
 [project.urls]
 Repository = "https://gitlab.com/mvvugt/log_tools"
@@ -32,6 +36,7 @@ Repository = "https://gitlab.com/mvvugt/log_tools"
 [project.scripts]
 runlog = "log_tools.cli.runlog:main"
 runlog-emitter-path = "log_tools.cli.emitter_path:main"
+runlog-setup-path = "log_tools.cli.setup_path:main"
 log_tools = "log_tools.__main__:main"
 
 [tool.setuptools]
@@ -42,7 +47,7 @@ include = ["log_tools*"]
 exclude = ["docs*", "resources*", "build*", "dist*"]
 
 [tool.setuptools.package-data]
-log_tools = ["emitter.sh"]
+log_tools = ["emitter.sh", "setup.sh"]
 
 [tool.setuptools.dynamic]
 version = { file = "VERSION" }
@@ -52,7 +57,7 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 80
-target-version = "py311"
+target-version = "py39"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
