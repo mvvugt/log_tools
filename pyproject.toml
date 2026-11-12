@@ -28,7 +28,7 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff", "bump2version", "build", "twine", "sphinx",
-       "pyyaml"]
+       "pyyaml", "setuptools>=61", "wheel"]
 
 [project.urls]
 Repository = "https://gitlab.com/mvvugt/log_tools"

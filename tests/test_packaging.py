@@ -37,10 +37,12 @@ def dist_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
         Directory holding exactly one `.tar.gz` and one `.whl`.
     """
     out = tmp_path_factory.mktemp("dist")
-    subprocess.run(
+    result = subprocess.run(
         [sys.executable, "-m", "build", "--no-isolation",
          "--outdir", str(out), str(REPO_ROOT)],
-        check=True, capture_output=True, text=True)
+        capture_output=True, text=True)
+    assert result.returncode == 0, (
+        f"build failed:\n{result.stdout[-2000:]}\n{result.stderr[-2000:]}")
     return out
 
 
