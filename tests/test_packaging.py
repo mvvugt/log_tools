@@ -111,6 +111,35 @@ def test_wheel_version_matches_version_file(dist_dir: Path) -> None:
 
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+def test_installed_wheel_reports_version(
+        dist_dir: Path, tmp_path: Path) -> None:
+    """A clean install of the wheel reports `VERSION` as `__version__`.
+
+    Installs into a fresh venv (offline, no deps) so no stale local
+    metadata, e.g. an old `log_tools.egg-info`, can mask the lookup.
+    """
+    expected = (REPO_ROOT / "VERSION").read_text().strip()
+    venv_dir = tmp_path / "venv"
+    subprocess.run([sys.executable, "-m", "venv", str(venv_dir)],
+                   check=True, capture_output=True)
+    bin_dir = venv_dir / ("Scripts" if sys.platform == "win32" else "bin")
+    subprocess.run(
+        [str(bin_dir / "python"), "-m", "pip", "install", "--no-index",
+         "--no-deps", "--quiet", str(_one(dist_dir, "*.whl"))],
+        check=True, capture_output=True)
+    version = subprocess.run(
+        [str(bin_dir / "python"), "-c",
+         "import log_tools; print(log_tools.__version__)"],
+        check=True, capture_output=True, text=True, cwd=tmp_path)
+    cli = subprocess.run(
+        [str(bin_dir / "runlog"), "--version"],
+        check=True, capture_output=True, text=True, cwd=tmp_path)
+
+    assert version.stdout.strip() == expected
+    assert cli.stdout.strip().endswith(expected)
+
+
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 def test_wheel_has_no_private_or_test_files(dist_dir: Path) -> None:
     """Only the `log_tools` package (plus dist-info) goes into the wheel."""
     names = _wheel_names(dist_dir)

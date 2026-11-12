@@ -8,6 +8,8 @@ from __future__ import annotations
 from importlib.metadata import PackageNotFoundError, version
 
 try:
-    __version__ = version("log_tools")
+    # The distribution name (pyproject.toml [project] name), not the
+    # import name: they differ since the PyPI rename to runlog-tools.
+    __version__ = version("runlog-tools")
 except PackageNotFoundError:
     __version__ = "0.0.0+unknown"

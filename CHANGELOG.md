@@ -3,6 +3,7 @@
 ### [Unreleased]
 
 * BUILD - Build and run the CI image as `linux/amd64` (`--platform`) so images built on Apple Silicon run on GitLab runners.
+* FIX - `log_tools.__version__` (and `runlog --version`, the docs release) looks up the `runlog-tools` distribution, not `log_tools`, so a clean PyPI install no longer reports `0.0.0+unknown`.
 
 ### [0.1.0] - 2026-11-12
 
